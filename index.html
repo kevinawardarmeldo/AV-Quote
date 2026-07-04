@@ -692,8 +692,8 @@ function renderProject(v,p){
         <div class="field"><label>Prepared by — title / role</label><input value="${esc(p.sig?.prepTitle||"")}" placeholder="e.g. AV Consultant" onchange="sigSet('${p.id}','prepTitle',this.value)"></div>
       </div>
       <div class="field-row c2" style="margin-bottom:0">
-        <div class="field" style="margin-bottom:0"><label>Approved by — name</label><input value="${esc(p.sig?.apprName||"")}" placeholder="left blank for handwriting" onchange="sigSet('${p.id}','apprName',this.value)"></div>
-        <div class="field" style="margin-bottom:0"><label>Approved by — company</label><input value="${esc(p.sig?.apprCompany||"")}" placeholder="defaults to client: ${esc(p.client||"—")}" onchange="sigSet('${p.id}','apprCompany',this.value)"></div>
+        <div class="field" style="margin-bottom:0"><label>Approved by — name</label><input value="${esc(p.sig?.apprName||"")}" placeholder="defaults to client: ${esc(p.client||"—")}" onchange="sigSet('${p.id}','apprName',this.value)"></div>
+        <div class="field" style="margin-bottom:0"><label>Approved by — company</label><input value="${esc(p.sig?.apprCompany||"")}" placeholder="left blank = not printed" onchange="sigSet('${p.id}','apprCompany',this.value)"></div>
       </div>
     </div>
 
@@ -1003,17 +1003,18 @@ function closeModal(){ $("#modalBack").classList.remove("open"); }
 $("#modalBack")?.addEventListener?.("click",e=>{ if(e.target.id==="modalBack") closeModal(); });
 
 /* ================= PDF export (print) ================= */
-function signBlockHTML(p,approverLabel,defaultApprCompany){
+function signBlockHTML(p,approverLabel,defaultApprName){
   const S=(p&&p.sig)||{};
   const blank='(&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;)';
+  const apprName=S.apprName||defaultApprName||"";
   return `<div class="p-sign">
     <div class="box">Prepared by,<div class="line"></div>
       <div class="sname">${S.prepName?"( "+esc(S.prepName)+" )":blank}</div>
       ${S.prepTitle?`<div class="srole">${esc(S.prepTitle)}</div>`:""}
       <div class="sco">${esc(CONFIG.COMPANY.name)}</div></div>
     <div class="box">${esc(approverLabel)},<div class="line"></div>
-      <div class="sname">${S.apprName?"( "+esc(S.apprName)+" )":blank}</div>
-      <div class="sco">${esc(S.apprCompany||defaultApprCompany)}</div></div>
+      <div class="sname">${apprName?"( "+esc(apprName)+" )":blank}</div>
+      ${S.apprCompany?`<div class="sco">${esc(S.apprCompany)}</div>`:""}</div>
   </div>`;
 }
 function docHeaderHTML(title,p,metaRows){
@@ -1057,7 +1058,7 @@ function printQuote(qid){
       <tr class="g"><td>GRAND TOTAL</td><td class="num-p" style="text-align:right">${fmtRp(quoteGrand(q))}</td></tr>
     </tbody></table>
     ${q.notes.trim()?`<div class="p-notes"><h4>Notes & Terms</h4><div>${esc(q.notes)}</div></div>`:""}
-    ${signBlockHTML(p,"Approved by",isRap?"Management — "+CONFIG.COMPANY.name:(p.client||"Client"))}
+    ${signBlockHTML(p,"Approved by",isRap?"Management":(p.client||""))}
   </div>`;
   window.print();
 }
@@ -1097,7 +1098,7 @@ function printSummary(pid,scope){
       <tr class="g"><td>EST. MARGIN</td><td class="num-p" style="text-align:right">${fmtRp(gq-gr)}</td></tr>
     </tbody></table>`:""}
     ${(p.summaryNotes||"").trim()?`<div class="p-notes"><h4>Notes & Terms</h4><div>${esc(p.summaryNotes)}</div></div>`:""}
-    ${signBlockHTML(p,"Approved by",scope==="rap"?"Management — "+CONFIG.COMPANY.name:(p.client||"Client"))}
+    ${signBlockHTML(p,"Approved by",scope==="rap"?"Management":(p.client||""))}
   </div>`;
   window.print();
 }
