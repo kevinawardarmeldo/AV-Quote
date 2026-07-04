@@ -243,7 +243,7 @@ const CONFIG = {
 
 const SHEETS = {
   Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price","Price Updated"],
-  Projects:     ["ID","Name","Location","Client","Created"],
+  Projects:     ["ID","Name","Location","Client","Created","Summary Notes"],
   Quotations:   ["ID","ProjectID","QuoteNumber","Title","Date","Tax","DataJSON","Updated"],
   NoteTemplates:["ID","Name","Content"]
 };
@@ -364,7 +364,7 @@ async function loadAll(){
   const res=await api("/values:batchGet?"+ranges);
   const [eq,pr,qu,nt]=res.valueRanges.map(v=>v.values||[]);
   DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||""}));
-  DB.projects=pr.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",location:r[2]||"",client:r[3]||"",created:r[4]||""}));
+  DB.projects=pr.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",location:r[2]||"",client:r[3]||"",created:r[4]||"",summaryNotes:r[5]||""}));
   DB.quotations=qu.filter(r=>r[0]).map(r=>{
     let d={}; try{d=JSON.parse(r[6]||"{}")}catch(e){}
     return {id:r[0],projectId:r[1],quoteNumber:r[2]||"",title:r[3]||"",date:r[4]||"",tax:r[5]==="TRUE"||r[5]===true||r[5]==="1",
@@ -380,7 +380,7 @@ async function saveTab(tab,rows){
   }
 }
 const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||""]));
-const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created]));
+const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||""]));
 const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0}}),new Date().toISOString()]));
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
 async function persist(fn,msg){
@@ -664,6 +664,23 @@ function renderProject(v,p){
     </div>
     ${docTable(raps,"rap")}
 
+    <div class="card card-pad" style="margin-bottom:22px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <span class="eyebrow">Summary notes (printed on the summary PDF / Excel)</span>
+        <div style="display:flex;gap:8px">
+          <select id="pTplSelect" style="border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px">
+            <option value="">Insert from template…</option>
+            ${DB.templates.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join("")}
+          </select>
+          <button class="btn small" onclick="insertProjectTemplate('${p.id}')">Insert</button>
+          <button class="btn small primary" onclick="persist(saveProjects,'Summary notes saved')">Save notes</button>
+        </div>
+      </div>
+      <textarea id="pNotesBox" rows="4" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;outline:none"
+        placeholder="Notes shown at the bottom of the project summary — validity, scope remarks, payment schedule across quotations…"
+        oninput="getProject('${p.id}').summaryNotes=this.value;setDirty(true)">${esc(p.summaryNotes||"")}</textarea>
+    </div>
+
     ${(quotes.length||raps.length)?`
     <span class="eyebrow">Project summary</span>
     <div class="card card-pad" style="margin-top:8px;max-width:560px">
@@ -886,6 +903,11 @@ function insertTemplate(qid){
   const t=DB.templates.find(x=>x.id===tid), q=getQuote(qid);
   q.notes=(q.notes?q.notes+"\n\n":"")+t.content; setDirty(true); render();
 }
+function insertProjectTemplate(pid){
+  const tid=$("#pTplSelect").value; if(!tid) return;
+  const t=DB.templates.find(x=>x.id===tid), p=getProject(pid);
+  p.summaryNotes=(p.summaryNotes?p.summaryNotes+"\n\n":"")+t.content; setDirty(true); render();
+}
 async function saveNotesAsTemplate(qid){
   const q=getQuote(qid); if(!q.notes.trim()) return alert("Notes are empty.");
   const name=prompt("Template name:","Terms — "+todayISO()); if(!name) return;
@@ -984,6 +1006,7 @@ function printQuote(qid){
 }
 function printSummary(pid,scope){
   scope=scope||"all";
+  if(dirty) persist(saveProjects);
   const p=getProject(pid);
   const quotes=scope==="rap"?[]:kindQuotes(pid,"quote");
   const raps=scope==="quote"?[]:kindQuotes(pid,"rap");
@@ -1016,6 +1039,7 @@ function printSummary(pid,scope){
       <tr><td>Total RAP (budget)</td><td class="num-p" style="text-align:right">${fmtRp(gr)}</td></tr>
       <tr class="g"><td>EST. MARGIN</td><td class="num-p" style="text-align:right">${fmtRp(gq-gr)}</td></tr>
     </tbody></table>`:""}
+    ${(p.summaryNotes||"").trim()?`<div class="p-notes"><h4>Notes & Terms</h4><div>${esc(p.summaryNotes)}</div></div>`:""}
     <div class="p-sign">
       <div class="box">Prepared by,<div class="line"></div>${esc(CONFIG.COMPANY.name)}</div>
       <div class="box">Approved by,<div class="line"></div>${esc(p.client||"Client")}</div>
@@ -1075,6 +1099,7 @@ function exportSummaryXlsx(pid,scope){
   if(quotes.length) sumAOA.push(["","","","","","","","Total quotations",gq]);
   if(raps.length)   sumAOA.push(["","","","","","","","Total RAP",gr]);
   if(scope==="all"&&quotes.length&&raps.length) sumAOA.push(["","","","","","","","EST. MARGIN",gq-gr]);
+  if((p.summaryNotes||"").trim()){ sumAOA.push([]); sumAOA.push(["Notes & Terms"]); p.summaryNotes.split("\n").forEach(l=>sumAOA.push([l])); }
   XLSX.utils.book_append_sheet(wb,sheetFromAOA(sumAOA,[10,5,18,30,12,15,12,12,15]),"Summary");
   quotes.concat(raps).forEach((q,i)=>{
     const nm=((q.kind==="rap"?"RAP ":"Q ")+(q.quoteNumber||q.title||i+1)).replace(/[\\/:*?\[\]"<>|]/g,"-").slice(0,31)||("Doc"+(i+1));
