@@ -648,8 +648,7 @@ function renderProject(v,p){
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" onclick="openProjectModal(getProject('${p.id}'))">Edit details</button>
-        <button class="btn" onclick="exportSummaryXlsx('${p.id}')" ${(quotes.length||raps.length)?"":"disabled"}>⤓ Excel summary</button>
-        <button class="btn" onclick="printSummary('${p.id}')" ${(quotes.length||raps.length)?"":"disabled"}>⤓ PDF summary</button>
+        <button class="btn" onclick="openSummaryExport('${p.id}')" ${(quotes.length||raps.length)?"":"disabled"}>⤓ Export summary</button>
       </div>
     </div>
 
@@ -675,6 +674,20 @@ function renderProject(v,p){
         ${(quotes.length&&raps.length)?`<div class="line grand"><span>Est. margin (quote − RAP)</span><span class="num" style="color:${gq-gr>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(gq-gr)}</span></div>`:""}
       </div>
     </div>`:""}`;
+}
+function openSummaryExport(pid){
+  const nq=kindQuotes(pid,"quote").length, nr=kindQuotes(pid,"rap").length;
+  openModal("Export project summary",`
+    <div class="field"><label>What to include</label>
+      <select id="sum_scope">
+        <option value="all" selected>Everything — quotations + RAP + estimated margin</option>
+        <option value="quote" ${nq?"":"disabled"}>Quotations only (${nq}) — safe to share with client</option>
+        <option value="rap" ${nr?"":"disabled"}>RAP only (${nr}) — internal budget</option>
+      </select></div>
+    <p style="font-size:12px;color:var(--muted)">Tip: choose “Quotations only” when the document goes to the client — RAP figures and margin stay internal.</p>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn" onclick="exportSummaryXlsx('${pid}',$('#sum_scope').value);closeModal()">⤓ Excel</button>
+     <button class="btn primary" onclick="printSummary('${pid}',$('#sum_scope').value);closeModal()">⤓ PDF</button>`);
 }
 async function newQuote(pid,kind){
   kind=kind||"quote";
@@ -969,8 +982,11 @@ function printQuote(qid){
   </div>`;
   window.print();
 }
-function printSummary(pid){
-  const p=getProject(pid), quotes=kindQuotes(pid,"quote"), raps=kindQuotes(pid,"rap");
+function printSummary(pid,scope){
+  scope=scope||"all";
+  const p=getProject(pid);
+  const quotes=scope==="rap"?[]:kindQuotes(pid,"quote");
+  const raps=scope==="quote"?[]:kindQuotes(pid,"rap");
   const tbl=(list,label)=>{
     if(!list.length) return "";
     const g=list.reduce((a,q)=>a+quoteGrand(q),0);
@@ -989,13 +1005,13 @@ function printSummary(pid){
   };
   const gq=quotes.reduce((a,q)=>a+quoteGrand(q),0), gr=raps.reduce((a,q)=>a+quoteGrand(q),0);
   $("#printArea").innerHTML=`<div class="p-doc">
-    ${docHeaderHTML("PROJECT SUMMARY",p,[
+    ${docHeaderHTML(scope==="quote"?"QUOTATION SUMMARY":scope==="rap"?"RAP SUMMARY (INTERNAL)":"PROJECT SUMMARY",p,[
       ["Project",p.name],["Location",p.location||"—"],["Client",p.client||"—"],
       ["Exported",new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})]
     ])}
     ${tbl(quotes,"Quotations")}
     ${tbl(raps,"RAP / Budget Estimation")}
-    ${(quotes.length&&raps.length)?`<table class="p-tot"><tbody>
+    ${(scope==="all"&&quotes.length&&raps.length)?`<table class="p-tot"><tbody>
       <tr><td>Total quotations</td><td class="num-p" style="text-align:right">${fmtRp(gq)}</td></tr>
       <tr><td>Total RAP (budget)</td><td class="num-p" style="text-align:right">${fmtRp(gr)}</td></tr>
       <tr class="g"><td>EST. MARGIN</td><td class="num-p" style="text-align:right">${fmtRp(gq-gr)}</td></tr>
@@ -1043,11 +1059,14 @@ function exportQuoteXlsx(qid){
   const fname=((q.quoteNumber||q.title||"quotation").replace(/[\\/:*?"<>|]/g,"-"))+".xlsx";
   XLSX.writeFile(wb,fname); toast("Excel exported");
 }
-function exportSummaryXlsx(pid){
+function exportSummaryXlsx(pid,scope){
+  scope=scope||"all";
   if(needXLSX()) return;
-  const p=getProject(pid), quotes=kindQuotes(pid,"quote"), raps=kindQuotes(pid,"rap");
+  const p=getProject(pid);
+  const quotes=scope==="rap"?[]:kindQuotes(pid,"quote");
+  const raps=scope==="quote"?[]:kindQuotes(pid,"rap");
   const wb=XLSX.utils.book_new();
-  const sumAOA=[[CONFIG.COMPANY.name],["PROJECT SUMMARY — "+p.name],["Location",p.location||""],["Client",p.client||""],["Exported",todayISO()],[],
+  const sumAOA=[[CONFIG.COMPANY.name],[(scope==="quote"?"QUOTATION SUMMARY — ":scope==="rap"?"RAP SUMMARY (INTERNAL) — ":"PROJECT SUMMARY — ")+p.name],["Location",p.location||""],["Client",p.client||""],["Exported",todayISO()],[],
     ["Type","No","Number","Title","Date","Subtotal","Discount","PPN 11%","Grand Total"]];
   const push=(list,label)=>list.forEach((q,i)=>sumAOA.push([label,i+1,q.quoteNumber||"",q.title||"",q.date||"",quoteSubtotal(q),-quoteDiscount(q)||0,quoteTax(q),quoteGrand(q)]));
   push(quotes,"Quotation"); push(raps,"RAP");
@@ -1055,13 +1074,13 @@ function exportSummaryXlsx(pid){
   sumAOA.push([]);
   if(quotes.length) sumAOA.push(["","","","","","","","Total quotations",gq]);
   if(raps.length)   sumAOA.push(["","","","","","","","Total RAP",gr]);
-  if(quotes.length&&raps.length) sumAOA.push(["","","","","","","","EST. MARGIN",gq-gr]);
+  if(scope==="all"&&quotes.length&&raps.length) sumAOA.push(["","","","","","","","EST. MARGIN",gq-gr]);
   XLSX.utils.book_append_sheet(wb,sheetFromAOA(sumAOA,[10,5,18,30,12,15,12,12,15]),"Summary");
   quotes.concat(raps).forEach((q,i)=>{
     const nm=((q.kind==="rap"?"RAP ":"Q ")+(q.quoteNumber||q.title||i+1)).replace(/[\\/:*?\[\]"<>|]/g,"-").slice(0,31)||("Doc"+(i+1));
     XLSX.utils.book_append_sheet(wb,sheetFromAOA(quoteAOA(q,p),[5,16,20,44,7,8,16,16]),nm);
   });
-  XLSX.writeFile(wb,(p.name.replace(/[\\/:*?"<>|]/g,"-"))+" - summary.xlsx"); toast("Excel exported");
+  XLSX.writeFile(wb,(p.name.replace(/[\\/:*?"<>|]/g,"-"))+(scope==="quote"?" - quotation summary":scope==="rap"?" - RAP summary":" - summary")+".xlsx"); toast("Excel exported");
 }
 
 /* ================= boot ================= */
