@@ -242,7 +242,7 @@ const CONFIG = {
 { const m=CONFIG.SPREADSHEET_ID.match(/\/d\/([A-Za-z0-9_-]{20,})/); if(m) CONFIG.SPREADSHEET_ID=m[1]; }
 
 const SHEETS = {
-  Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price"],
+  Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price","Price Updated"],
   Projects:     ["ID","Name","Location","Client","Created"],
   Quotations:   ["ID","ProjectID","QuoteNumber","Title","Date","Tax","DataJSON","Updated"],
   NoteTemplates:["ID","Name","Content"]
@@ -360,10 +360,10 @@ async function ensureTabs(){
   }
 }
 async function loadAll(){
-  const ranges=Object.keys(SHEETS).map(t=>`ranges=${encodeURIComponent(t+"!A2:H")}`).join("&");
+  const ranges=Object.keys(SHEETS).map(t=>`ranges=${encodeURIComponent(t+"!A2:I")}`).join("&");
   const res=await api("/values:batchGet?"+ranges);
   const [eq,pr,qu,nt]=res.valueRanges.map(v=>v.values||[]);
-  DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0}));
+  DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||""}));
   DB.projects=pr.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",location:r[2]||"",client:r[3]||"",created:r[4]||""}));
   DB.quotations=qu.filter(r=>r[0]).map(r=>{
     let d={}; try{d=JSON.parse(r[6]||"{}")}catch(e){}
@@ -374,12 +374,12 @@ async function loadAll(){
   DB.templates=nt.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",content:r[2]||""}));
 }
 async function saveTab(tab,rows){
-  await api(`/values/${encodeURIComponent(tab)}!A2:H:clear`,{method:"POST",body:"{}"});
+  await api(`/values/${encodeURIComponent(tab)}!A2:I:clear`,{method:"POST",body:"{}"});
   if(rows.length){
     await api(`/values/${encodeURIComponent(tab)}!A2?valueInputOption=RAW`,{method:"PUT",body:JSON.stringify({values:rows})});
   }
 }
-const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0]));
+const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||""]));
 const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created]));
 const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0}}),new Date().toISOString()]));
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
@@ -398,6 +398,13 @@ const quoteTax=q=>q.tax?Math.round((quoteSubtotal(q)-quoteDiscount(q))*0.11):0;
 const quoteGrand=q=>quoteSubtotal(q)-quoteDiscount(q)+quoteTax(q);
 const discLabel=q=>q.discount?.type==="percent"?`Discount (${fmtN(q.discount.value)}%)`:"Discount";
 const kindQuotes=(pid,k)=>DB.quotations.filter(q=>q.projectId===pid&&(q.kind||"quote")===k);
+/* price staleness */
+let priceWarnDays=30;
+try{ priceWarnDays=Number(localStorage.getItem("avq_price_warn_days"))||30; }catch(e){}
+function setPriceWarnDays(v){ priceWarnDays=Number(v)||30; try{localStorage.setItem("avq_price_warn_days",priceWarnDays);}catch(e){} renderEquipmentRows(); }
+function priceAge(e){ if(!e.priceUpdated) return Infinity; return Math.floor((Date.now()-new Date(e.priceUpdated+"T00:00:00").getTime())/86400000); }
+function isStale(e){ return priceAge(e)>priceWarnDays; }
+function ageLabel(e){ const a=priceAge(e); if(a===Infinity) return "no record"; if(a<=0) return "today"; if(a<31) return a+" d ago"; if(a<365) return Math.round(a/30)+" mo ago"; return (a/365).toFixed(1)+" yr ago"; }
 const getProject=id=>DB.projects.find(p=>p.id===id);
 const getQuote=id=>DB.quotations.find(q=>q.id===id);
 const projectQuotes=pid=>DB.quotations.filter(q=>q.projectId===pid);
@@ -492,14 +499,19 @@ function renderEquipmentTab(b){
       <select id="eqCat" onchange="renderEquipmentRows()" style="border:1px solid var(--line);border-radius:8px;padding:8px">
         <option value="">All categories</option>${cats.map(c=>`<option>${esc(c)}</option>`).join("")}
       </select>
+      <select onchange="setPriceWarnDays(this.value)" title="Warn when a price hasn't been checked within this period" style="border:1px solid var(--line);border-radius:8px;padding:8px">
+        ${[["30","Warn: 1 month"],["90","Warn: 3 months"],["180","Warn: 6 months"],["365","Warn: 1 year"]].map(([v,l])=>`<option value="${v}" ${String(priceWarnDays)===v?"selected":""}>${l}</option>`).join("")}
+      </select>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:0 10px">
+        <input type="checkbox" id="eqStaleOnly" onchange="renderEquipmentRows()"> ⚠ stale only</label>
       <button class="btn" onclick="eqSearch='';eqF={brand:'',series:'',description:'',category:'',unit:''};render()">Clear filters</button>
     </div>
     <div class="card" style="overflow-x:auto"><table class="grid" style="min-width:860px">
       <thead>
-        <tr><th>Brand</th><th>Series / Type</th><th>Description</th><th>Category</th><th>Unit</th><th class="t-right">Sell Price</th><th class="t-right">Budget Price</th><th></th></tr>
+        <tr><th>Brand</th><th>Series / Type</th><th>Description</th><th>Category</th><th>Unit</th><th class="t-right">Sell Price</th><th class="t-right">Budget Price</th><th>Price Updated</th><th></th></tr>
         <tr class="filterrow">
           <th>${fi("brand","filter…")}</th><th>${fi("series","filter…")}</th><th>${fi("description","filter…")}</th>
-          <th>${fi("category","filter…")}</th><th>${fi("unit","filter…")}</th><th></th><th></th><th></th>
+          <th>${fi("category","filter…")}</th><th>${fi("unit","filter…")}</th><th></th><th></th><th></th><th></th>
         </tr>
       </thead>
       <tbody id="eqRows"></tbody></table></div>`;
@@ -507,10 +519,12 @@ function renderEquipmentTab(b){
 }
 function renderEquipmentRows(){
   const q=(eqSearch||"").toLowerCase(), cat=$("#eqCat")?.value||"";
+  const staleOnly=$("#eqStaleOnly")?.checked;
   const list=DB.equipment.filter(e=>
     (!cat||e.category===cat)
     &&(!q||(e.brand+" "+e.series+" "+e.description+" "+e.category).toLowerCase().includes(q))
     &&["brand","series","description","category","unit"].every(k=>!eqF[k]||String(e[k]||"").toLowerCase().includes(eqF[k].toLowerCase()))
+    &&(!staleOnly||isStale(e))
   );
   $("#eqRows").innerHTML=list.length?list.map(e=>`
     <tr><td style="font-weight:600">${esc(e.brand)}</td><td>${esc(e.series)}</td>
@@ -518,10 +532,14 @@ function renderEquipmentRows(){
     <td>${e.category?`<span class="pill amber">${esc(e.category)}</span>`:""}</td>
     <td>${esc(e.unit)}</td><td class="t-right num">${fmtRp(e.price)}</td>
     <td class="t-right num" style="color:var(--muted)">${e.cost?fmtRp(e.cost):"—"}</td>
+    <td style="white-space:nowrap;font-size:12px">
+      ${isStale(e)?`<span class="pill" style="background:var(--red-soft);color:var(--red)" title="Price not checked within the warning period — verify with supplier">⚠ ${ageLabel(e)}</span>`
+        :`<span class="num" style="color:var(--muted)">${ageLabel(e)}</span>`}</td>
     <td class="t-right" style="white-space:nowrap">
+      <button class="btn ghost small" title="Mark price as checked today (no change)" onclick="verifyPrice('${e.id}')">✓ Checked</button>
       <button class="btn ghost small" onclick="openEquipmentModal('${e.id}')">Edit</button>
       <button class="btn ghost small danger" onclick="deleteEquipment('${e.id}')">Delete</button></td></tr>`).join("")
-  :`<tr><td colspan="8"><div class="empty">No equipment matches these filters.</div></td></tr>`;
+  :`<tr><td colspan="9"><div class="empty">No equipment matches these filters.</div></td></tr>`;
 }
 function openEquipmentModal(id){
   const e=DB.equipment.find(x=>x.id===id);
@@ -548,8 +566,16 @@ async function saveEquipmentModal(id){
   const rec={brand:$("#m_brand").value.trim(),series:$("#m_series").value.trim(),description:$("#m_desc").value.trim(),
     category:$("#m_cat").value.trim(),unit:$("#m_unit").value.trim()||"unit",price:Number($("#m_price").value)||0,cost:Number($("#m_cost").value)||0};
   if(!rec.brand&&!rec.series&&!rec.description) return alert("Fill in at least a brand, series or description.");
-  if(id){ Object.assign(DB.equipment.find(x=>x.id===id),rec); } else DB.equipment.unshift({id:uid(),...rec});
+  if(id){
+    const e=DB.equipment.find(x=>x.id===id);
+    if(e.price!==rec.price||e.cost!==rec.cost) rec.priceUpdated=todayISO(); // price changed → stamp today
+    Object.assign(e,rec);
+  } else DB.equipment.unshift({id:uid(),...rec,priceUpdated:todayISO()});
   closeModal(); render(); await persist(saveEquipment);
+}
+async function verifyPrice(id){
+  DB.equipment.find(x=>x.id===id).priceUpdated=todayISO();
+  renderEquipmentRows(); await persist(saveEquipment,"Price marked as checked today");
 }
 async function deleteEquipment(id){
   if(!confirm("Delete this item from the equipment database?")) return;
@@ -872,7 +898,7 @@ function renderPicker(){
   $("#pkRows").innerHTML=list.length?list.map(e=>`
     <tr><td style="font-weight:600;white-space:nowrap">${esc(e.brand)}</td><td style="white-space:nowrap">${esc(e.series)}</td>
     <td style="color:var(--muted);font-size:12.5px">${esc(e.description)}</td>
-    <td class="t-right num" style="white-space:nowrap">${getQuote(pickerCtx.qid)?.kind==="rap"?(e.cost?fmtRp(e.cost):fmtRp(e.price)+" *"):fmtRp(e.price)}</td>
+    <td class="t-right num" style="white-space:nowrap">${isStale(e)?`<span title="Price last checked ${ageLabel(e)} — verify before quoting" style="color:var(--red);cursor:help">⚠ </span>`:""}${getQuote(pickerCtx.qid)?.kind==="rap"?(e.cost?fmtRp(e.cost):fmtRp(e.price)+" *"):fmtRp(e.price)}</td>
     <td class="t-right"><button class="btn small primary" onclick="pickItem('${e.id}')">Add</button></td></tr>`).join("")
   :`<tr><td style="padding:20px;text-align:center;color:var(--muted)">No matches in the equipment database.</td></tr>`;
 }
