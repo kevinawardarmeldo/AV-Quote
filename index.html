@@ -219,7 +219,7 @@ const CONFIG = {
 
   // 2. The ID of your Google Sheet (from its URL:
   //    https://docs.google.com/spreadsheets/d/<THIS_PART>/edit)
-  SPREADSHEET_ID: "https://docs.google.com/spreadsheets/d/1LK76WXTTUXxeqLvfRSjUEGSX0cvndGNgRQ20grfQkBU/edit",
+  SPREADSHEET_ID: "1LK76WXTTUXxeqLvfRSjUEGSX0cvndGNgRQ20grfQkBU",
 
   // 3. Extra allowlist (soft gate shown in the UI). Real security comes from
   //    the Sheet's own sharing settings — see README. Leave [] to allow any
@@ -229,9 +229,9 @@ const CONFIG = {
   // 4. Company block printed on the PDF header
   COMPANY: {
     name: "PT. Sinergi Anugrah Mandiri",
-    tagline: "Sinergi Tech",
+    tagline: "Sinergi Acoustic — AV Systems Integration",
     address: "Jakarta, Indonesia",
-    contact: "kevin@sinergiacoustic.com · +62 8180 3243	584"
+    contact: "email@company.com · +62 xxx xxxx xxxx"
   }
 };
 const SHEETS = {
@@ -290,7 +290,13 @@ async function signIn(){
   const errBox=$("#loginErr"); errBox.style.display="none";
   try{
     await requestToken("consent");
-    const ui=await (await fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+token}})).json();
+    let uiRes;
+    try{
+      uiRes=await fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+token}});
+    }catch(e){
+      throw new Error("Network blocked while calling www.googleapis.com (userinfo) — usually an ad blocker / tracking protection. Try Incognito with extensions off, or whitelist this site.");
+    }
+    const ui=await uiRes.json();
     userEmail=ui.email||""; userPic=ui.picture||"";
     if(CONFIG.ALLOWED_EMAILS.length && !CONFIG.ALLOWED_EMAILS.map(e=>e.toLowerCase()).includes(userEmail.toLowerCase()))
       throw new Error(userEmail+" is not on the authorized list for this tool.");
@@ -315,10 +321,15 @@ function signOut(){
 const API="https://sheets.googleapis.com/v4/spreadsheets/";
 async function api(path,opts={}){
   await ensureToken();
-  const r=await fetch(API+CONFIG.SPREADSHEET_ID+path,{
-    ...opts,
-    headers:{Authorization:"Bearer "+token,"Content-Type":"application/json",...(opts.headers||{})}
-  });
+  let r;
+  try{
+    r=await fetch(API+CONFIG.SPREADSHEET_ID+path,{
+      ...opts,
+      headers:{Authorization:"Bearer "+token,"Content-Type":"application/json",...(opts.headers||{})}
+    });
+  }catch(e){
+    throw new Error("Network blocked while calling sheets.googleapis.com — usually an ad blocker / tracking protection (uBlock, Brave Shields, Edge Strict mode). Try Incognito with extensions off, or whitelist this site. Also confirm the Google Sheets API is enabled in your Cloud project.");
+  }
   if(r.status===401){ token=null; await ensureToken(); return api(path,opts); }
   if(!r.ok){
     const body=await r.json().catch(()=>({}));
