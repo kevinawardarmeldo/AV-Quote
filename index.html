@@ -659,19 +659,55 @@ async function newQuote(pid,kind){
   await persist(saveQuotes,(kind==="rap"?"RAP":"Quotation")+" created");
   go({view:"quote",quoteId:q.id});
 }
-async function deriveRAP(qid){
+function deriveRAP(qid){
   const src=getQuote(qid);
-  const copy=JSON.parse(JSON.stringify(src));
-  copy.id=uid(); copy.kind="rap"; copy.quoteNumber=""; copy.title="RAP — "+(src.title||src.quoteNumber||"Quotation");
-  copy.discount={type:"percent",value:0};
-  let mapped=0;
-  copy.sections.forEach(sec=>sec.items.forEach(it=>{
+  const total=src.sections.reduce((a,s)=>a+s.items.length,0);
+  const dbHits=src.sections.reduce((a,s)=>a+s.items.filter(it=>{
     const e=DB.equipment.find(x=>x.brand.trim().toLowerCase()===String(it.brand).trim().toLowerCase()
       && x.series.trim().toLowerCase()===String(it.series).trim().toLowerCase());
-    if(e&&e.cost>0){ it.price=e.cost; mapped++; }
+    return e&&e.cost>0;
+  }).length,0);
+  openModal("Create RAP from “"+esc(src.title||src.quoteNumber||"Quotation")+"”",`
+    <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+      The full BoQ (${total} line${total===1?"":"s"}, all sections and quantities) will be copied into a new RAP.
+      Choose how each line's budget price is calculated. ${dbHits} of ${total} lines match an equipment
+      database item that has a budget price.</p>
+    <div class="field"><label>Price source</label>
+      <select id="rap_mode">
+        <option value="db_pct" selected>Budget price from database · unmatched lines use % of quote price</option>
+        <option value="db_keep">Budget price from database · unmatched lines keep quotation price</option>
+        <option value="pct">% of quotation price for ALL lines (ignore database)</option>
+      </select></div>
+    <div class="field" id="rap_pct_wrap"><label>Cost percentage of quotation price</label>
+      <input id="rap_pct" type="number" min="1" max="200" step="any" value="70">
+      <span style="font-size:12px;color:var(--muted)">e.g. 70 → a line quoted at Rp 10.000.000 becomes Rp 7.000.000 in the RAP</span></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="doDeriveRAP('${qid}')">Create RAP</button>`);
+  $("#rap_mode").addEventListener("change",e=>{ $("#rap_pct_wrap").style.display=e.target.value==="db_keep"?"none":"flex"; });
+}
+async function doDeriveRAP(qid){
+  const src=getQuote(qid);
+  const mode=$("#rap_mode").value;
+  const pct=(Number($("#rap_pct").value)||70)/100;
+  const copy=JSON.parse(JSON.stringify(src));
+  copy.id=uid(); copy.kind="rap"; copy.quoteNumber="";
+  copy.title="RAP — "+(src.title||src.quoteNumber||"Quotation");
+  copy.discount={type:"percent",value:0};
+  let fromDB=0, fromPct=0, kept=0;
+  copy.sections.forEach(sec=>sec.items.forEach(it=>{
+    const e=(mode!=="pct")?DB.equipment.find(x=>x.brand.trim().toLowerCase()===String(it.brand).trim().toLowerCase()
+      && x.series.trim().toLowerCase()===String(it.series).trim().toLowerCase()):null;
+    if(e&&e.cost>0){ it.price=e.cost; fromDB++; }
+    else if(mode==="db_keep"){ kept++; }
+    else { it.price=Math.round((Number(it.price)||0)*pct); fromPct++; }
   }));
+  closeModal();
   DB.quotations.push(copy);
-  await persist(saveQuotes,`RAP created — ${mapped} line(s) mapped to budget prices`);
+  const parts=[];
+  if(fromDB) parts.push(fromDB+" from database");
+  if(fromPct) parts.push(fromPct+" at "+Math.round(pct*100)+"% of quote");
+  if(kept) parts.push(kept+" kept at quote price");
+  await persist(saveQuotes,"RAP created — "+(parts.join(", ")||"empty"));
   go({view:"quote",quoteId:copy.id});
 }
 async function duplicateQuote(id){
