@@ -161,6 +161,9 @@ table.grid tr.rowlink:hover td{background:#F5F8F5}
   .p-sign{margin-top:34px;display:flex;justify-content:space-between;page-break-inside:avoid}
   .p-sign .box{width:220px;font-size:11px}
   .p-sign .line{border-bottom:1px solid #111;height:52px;margin-bottom:5px}
+  .p-sign .sname{font-weight:700;font-size:11.5px}
+  .p-sign .srole{color:#444;font-size:10px}
+  .p-sign .sco{color:#111;font-size:10.5px;font-weight:600;margin-top:1px}
   .num-p{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
   tr{page-break-inside:avoid}
   @page{margin:16mm 14mm}
@@ -243,14 +246,15 @@ const CONFIG = {
 
 const SHEETS = {
   Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price","Price Updated"],
-  Projects:     ["ID","Name","Location","Client","Created","Summary Notes"],
+  Projects:     ["ID","Name","Location","Client","Created","Summary Notes","Signature"],
   Quotations:   ["ID","ProjectID","QuoteNumber","Title","Date","Tax","DataJSON","Updated"],
-  NoteTemplates:["ID","Name","Content"]
+  NoteTemplates:["ID","Name","Content"],
+  SignaturePresets:["ID","Name","JSON"]
 };
 
 /* ================= state ================= */
 let token=null, tokenExp=0, userEmail="", userPic="";
-let DB={equipment:[],projects:[],quotations:[],templates:[]};
+let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[]};
 let route={view:"home",tab:"projects",projectId:null,quoteId:null};
 let dirty=false;
 
@@ -362,9 +366,13 @@ async function ensureTabs(){
 async function loadAll(){
   const ranges=Object.keys(SHEETS).map(t=>`ranges=${encodeURIComponent(t+"!A2:I")}`).join("&");
   const res=await api("/values:batchGet?"+ranges);
-  const [eq,pr,qu,nt]=res.valueRanges.map(v=>v.values||[]);
+  const [eq,pr,qu,nt,sp]=res.valueRanges.map(v=>v.values||[]);
   DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||""}));
-  DB.projects=pr.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",location:r[2]||"",client:r[3]||"",created:r[4]||"",summaryNotes:r[5]||""}));
+  DB.projects=pr.filter(r=>r[0]).map(r=>{
+    let sig={}; try{sig=JSON.parse(r[6]||"{}")}catch(e){}
+    return {id:r[0],name:r[1]||"",location:r[2]||"",client:r[3]||"",created:r[4]||"",summaryNotes:r[5]||"",
+      sig:{prepName:sig.prepName||"",prepTitle:sig.prepTitle||"",apprName:sig.apprName||"",apprCompany:sig.apprCompany||""}};
+  });
   DB.quotations=qu.filter(r=>r[0]).map(r=>{
     let d={}; try{d=JSON.parse(r[6]||"{}")}catch(e){}
     return {id:r[0],projectId:r[1],quoteNumber:r[2]||"",title:r[3]||"",date:r[4]||"",tax:r[5]==="TRUE"||r[5]===true||r[5]==="1",
@@ -372,6 +380,7 @@ async function loadAll(){
             discount:d.discount||{type:"percent",value:0},updated:r[7]||""};
   });
   DB.templates=nt.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",content:r[2]||""}));
+  DB.sigPresets=(sp||[]).filter(r=>r[0]).map(r=>{let j={};try{j=JSON.parse(r[2]||"{}")}catch(e){} return {id:r[0],name:r[1]||"",...j};});
 }
 async function saveTab(tab,rows){
   await api(`/values/${encodeURIComponent(tab)}!A2:I:clear`,{method:"POST",body:"{}"});
@@ -380,7 +389,8 @@ async function saveTab(tab,rows){
   }
 }
 const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||""]));
-const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||""]));
+const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||"",JSON.stringify(p.sig||{})]));
+const saveSigPresets=()=>saveTab("SignaturePresets",DB.sigPresets.map(t=>[t.id,t.name,JSON.stringify({prepName:t.prepName||"",prepTitle:t.prepTitle||"",apprName:t.apprName||"",apprCompany:t.apprCompany||""})]));
 const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0}}),new Date().toISOString()]));
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
 async function persist(fn,msg){
@@ -475,7 +485,7 @@ async function saveProjectModal(id){
   const name=$("#m_name").value.trim();
   if(!name) return alert("Project name is required.");
   if(id){ const p=getProject(id); p.name=name; p.location=$("#m_loc").value.trim(); p.client=$("#m_client").value.trim(); }
-  else DB.projects.unshift({id:uid(),name,location:$("#m_loc").value.trim(),client:$("#m_client").value.trim(),created:todayISO()});
+  else DB.projects.unshift({id:uid(),name,location:$("#m_loc").value.trim(),client:$("#m_client").value.trim(),created:todayISO(),summaryNotes:"",sig:{prepName:"",prepTitle:"",apprName:"",apprCompany:""}});
   closeModal(); render(); await persist(saveProjects);
 }
 async function deleteProject(id){
@@ -663,6 +673,29 @@ function renderProject(v,p){
       <button class="btn dark small" onclick="newQuote('${p.id}','rap')">+ New RAP</button>
     </div>
     ${docTable(raps,"rap")}
+
+    <div class="card card-pad" style="margin-bottom:22px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <span class="eyebrow">Signature block (printed on all PDF exports of this project)</span>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <select id="sigPreset" style="border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px">
+            <option value="">Insert from template…</option>
+            ${(DB.sigPresets||[]).map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join("")}
+          </select>
+          <button class="btn small" onclick="insertSigPreset('${p.id}')">Insert</button>
+          <button class="btn small" onclick="saveSigAsPreset('${p.id}')">Save as template</button>
+          <button class="btn small primary" onclick="persist(saveProjects,'Signature info saved')">Save</button>
+        </div>
+      </div>
+      <div class="field-row c2">
+        <div class="field"><label>Prepared by — name</label><input value="${esc(p.sig?.prepName||"")}" placeholder="left blank if not set" onchange="sigSet('${p.id}','prepName',this.value)"></div>
+        <div class="field"><label>Prepared by — title / role</label><input value="${esc(p.sig?.prepTitle||"")}" placeholder="e.g. AV Consultant" onchange="sigSet('${p.id}','prepTitle',this.value)"></div>
+      </div>
+      <div class="field-row c2" style="margin-bottom:0">
+        <div class="field" style="margin-bottom:0"><label>Approved by — name</label><input value="${esc(p.sig?.apprName||"")}" placeholder="left blank for handwriting" onchange="sigSet('${p.id}','apprName',this.value)"></div>
+        <div class="field" style="margin-bottom:0"><label>Approved by — company</label><input value="${esc(p.sig?.apprCompany||"")}" placeholder="defaults to client: ${esc(p.client||"—")}" onchange="sigSet('${p.id}','apprCompany',this.value)"></div>
+      </div>
+    </div>
 
     <div class="card card-pad" style="margin-bottom:22px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
@@ -903,6 +936,20 @@ function insertTemplate(qid){
   const t=DB.templates.find(x=>x.id===tid), q=getQuote(qid);
   q.notes=(q.notes?q.notes+"\n\n":"")+t.content; setDirty(true); render();
 }
+function sigSet(pid,k,v){ const p=getProject(pid); p.sig=p.sig||{}; p.sig[k]=v; setDirty(true); }
+function insertSigPreset(pid){
+  const tid=$("#sigPreset").value; if(!tid) return;
+  const t=DB.sigPresets.find(x=>x.id===tid), p=getProject(pid);
+  p.sig={prepName:t.prepName||"",prepTitle:t.prepTitle||"",apprName:t.apprName||"",apprCompany:t.apprCompany||""};
+  setDirty(true); render(); toast("Signature template inserted — press Save to keep it");
+}
+async function saveSigAsPreset(pid){
+  const p=getProject(pid), sig=p.sig||{};
+  if(!sig.prepName&&!sig.apprCompany&&!sig.apprName&&!sig.prepTitle) return alert("Fill in the signature fields first.");
+  const name=prompt("Template name:",sig.prepName||"Signature"); if(!name) return;
+  DB.sigPresets.unshift({id:uid(),name,...sig});
+  await persist(saveSigPresets,"Signature template saved"); render();
+}
 function insertProjectTemplate(pid){
   const tid=$("#pTplSelect").value; if(!tid) return;
   const t=DB.templates.find(x=>x.id===tid), p=getProject(pid);
@@ -956,6 +1003,19 @@ function closeModal(){ $("#modalBack").classList.remove("open"); }
 $("#modalBack")?.addEventListener?.("click",e=>{ if(e.target.id==="modalBack") closeModal(); });
 
 /* ================= PDF export (print) ================= */
+function signBlockHTML(p,approverLabel,defaultApprCompany){
+  const S=(p&&p.sig)||{};
+  const blank='(&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;)';
+  return `<div class="p-sign">
+    <div class="box">Prepared by,<div class="line"></div>
+      <div class="sname">${S.prepName?"( "+esc(S.prepName)+" )":blank}</div>
+      ${S.prepTitle?`<div class="srole">${esc(S.prepTitle)}</div>`:""}
+      <div class="sco">${esc(CONFIG.COMPANY.name)}</div></div>
+    <div class="box">${esc(approverLabel)},<div class="line"></div>
+      <div class="sname">${S.apprName?"( "+esc(S.apprName)+" )":blank}</div>
+      <div class="sco">${esc(S.apprCompany||defaultApprCompany)}</div></div>
+  </div>`;
+}
 function docHeaderHTML(title,p,metaRows){
   const C=CONFIG.COMPANY;
   return `<div class="p-head">
@@ -997,10 +1057,7 @@ function printQuote(qid){
       <tr class="g"><td>GRAND TOTAL</td><td class="num-p" style="text-align:right">${fmtRp(quoteGrand(q))}</td></tr>
     </tbody></table>
     ${q.notes.trim()?`<div class="p-notes"><h4>Notes & Terms</h4><div>${esc(q.notes)}</div></div>`:""}
-    <div class="p-sign">
-      <div class="box">Prepared by,<div class="line"></div>${esc(CONFIG.COMPANY.name)}</div>
-      <div class="box">Approved by,<div class="line"></div>${esc(isRap?"Management":(p.client||"Client"))}</div>
-    </div>
+    ${signBlockHTML(p,"Approved by",isRap?"Management — "+CONFIG.COMPANY.name:(p.client||"Client"))}
   </div>`;
   window.print();
 }
@@ -1040,10 +1097,7 @@ function printSummary(pid,scope){
       <tr class="g"><td>EST. MARGIN</td><td class="num-p" style="text-align:right">${fmtRp(gq-gr)}</td></tr>
     </tbody></table>`:""}
     ${(p.summaryNotes||"").trim()?`<div class="p-notes"><h4>Notes & Terms</h4><div>${esc(p.summaryNotes)}</div></div>`:""}
-    <div class="p-sign">
-      <div class="box">Prepared by,<div class="line"></div>${esc(CONFIG.COMPANY.name)}</div>
-      <div class="box">Approved by,<div class="line"></div>${esc(p.client||"Client")}</div>
-    </div>
+    ${signBlockHTML(p,"Approved by",scope==="rap"?"Management — "+CONFIG.COMPANY.name:(p.client||"Client"))}
   </div>`;
   window.print();
 }
