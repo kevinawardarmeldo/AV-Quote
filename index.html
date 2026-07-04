@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{
   --ink:#101614; --muted:#5C665F; --paper:#F4F6F3; --surface:#FFFFFF;
@@ -66,6 +67,9 @@ table.grid tr.rowlink:hover td{background:#F5F8F5}
 .t-right{text-align:right}
 .pill{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:99px;background:var(--accent-soft);color:var(--accent-dark);font-weight:600}
 .pill.amber{background:var(--amber-soft);color:var(--amber)}
+.filterrow th{padding:4px 6px 8px;border-bottom:1px solid var(--line)}
+.colfilter{width:100%;border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px;outline:none;background:#FBFCFB}
+.colfilter:focus{border-color:var(--accent)}
 
 /* ---------- forms ---------- */
 .field{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
@@ -238,7 +242,7 @@ const CONFIG = {
 { const m=CONFIG.SPREADSHEET_ID.match(/\/d\/([A-Za-z0-9_-]{20,})/); if(m) CONFIG.SPREADSHEET_ID=m[1]; }
 
 const SHEETS = {
-  Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price"],
+  Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price"],
   Projects:     ["ID","Name","Location","Client","Created"],
   Quotations:   ["ID","ProjectID","QuoteNumber","Title","Date","Tax","DataJSON","Updated"],
   NoteTemplates:["ID","Name","Content"]
@@ -348,22 +352,24 @@ async function ensureTabs(){
   const missing=Object.keys(SHEETS).filter(t=>!existing.includes(t));
   if(missing.length){
     await api(":batchUpdate",{method:"POST",body:JSON.stringify({requests:missing.map(t=>({addSheet:{properties:{title:t}}}))})});
-    for(const t of missing){
-      await api(`/values/${encodeURIComponent(t)}!A1?valueInputOption=RAW`,{method:"PUT",
-        body:JSON.stringify({values:[SHEETS[t]]})});
-    }
+  }
+  // always rewrite header rows so schema upgrades (new columns) reach existing sheets
+  for(const t of Object.keys(SHEETS)){
+    await api(`/values/${encodeURIComponent(t)}!A1?valueInputOption=RAW`,{method:"PUT",
+      body:JSON.stringify({values:[SHEETS[t]]})});
   }
 }
 async function loadAll(){
   const ranges=Object.keys(SHEETS).map(t=>`ranges=${encodeURIComponent(t+"!A2:H")}`).join("&");
   const res=await api("/values:batchGet?"+ranges);
   const [eq,pr,qu,nt]=res.valueRanges.map(v=>v.values||[]);
-  DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0}));
+  DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0}));
   DB.projects=pr.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",location:r[2]||"",client:r[3]||"",created:r[4]||""}));
   DB.quotations=qu.filter(r=>r[0]).map(r=>{
     let d={}; try{d=JSON.parse(r[6]||"{}")}catch(e){}
     return {id:r[0],projectId:r[1],quoteNumber:r[2]||"",title:r[3]||"",date:r[4]||"",tax:r[5]==="TRUE"||r[5]===true||r[5]==="1",
-            sections:d.sections||[],notes:d.notes||"",updated:r[7]||""};
+            sections:d.sections||[],notes:d.notes||"",kind:d.kind||"quote",
+            discount:d.discount||{type:"percent",value:0},updated:r[7]||""};
   });
   DB.templates=nt.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",content:r[2]||""}));
 }
@@ -373,9 +379,9 @@ async function saveTab(tab,rows){
     await api(`/values/${encodeURIComponent(tab)}!A2?valueInputOption=RAW`,{method:"PUT",body:JSON.stringify({values:rows})});
   }
 }
-const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price]));
+const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0]));
 const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created]));
-const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes}),new Date().toISOString()]));
+const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0}}),new Date().toISOString()]));
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
 async function persist(fn,msg){
   try{ $("#saveState").textContent="saving…"; await fn(); setDirty(false); toast(msg||"Saved to Google Sheet"); }
@@ -386,8 +392,12 @@ async function persist(fn,msg){
 const lineTotal=i=>(Number(i.qty)||0)*(Number(i.price)||0);
 const sectionTotal=s=>s.items.reduce((a,i)=>a+lineTotal(i),0);
 const quoteSubtotal=q=>q.sections.reduce((a,s)=>a+sectionTotal(s),0);
-const quoteTax=q=>q.tax?Math.round(quoteSubtotal(q)*0.11):0;
-const quoteGrand=q=>quoteSubtotal(q)+quoteTax(q);
+const quoteDiscount=q=>{const d=q.discount||{type:"percent",value:0};const sub=quoteSubtotal(q);
+  return Math.min(sub,Math.round(d.type==="percent"?sub*(Number(d.value)||0)/100:(Number(d.value)||0)));};
+const quoteTax=q=>q.tax?Math.round((quoteSubtotal(q)-quoteDiscount(q))*0.11):0;
+const quoteGrand=q=>quoteSubtotal(q)-quoteDiscount(q)+quoteTax(q);
+const discLabel=q=>q.discount?.type==="percent"?`Discount (${fmtN(q.discount.value)}%)`:"Discount";
+const kindQuotes=(pid,k)=>DB.quotations.filter(q=>q.projectId===pid&&(q.kind||"quote")===k);
 const getProject=id=>DB.projects.find(p=>p.id===id);
 const getQuote=id=>DB.quotations.find(q=>q.id===id);
 const projectQuotes=pid=>DB.quotations.filter(q=>q.projectId===pid);
@@ -470,35 +480,48 @@ async function deleteProject(id){
 }
 
 /* ================= EQUIPMENT TAB ================= */
-let eqSearch="";
+let eqSearch="", eqF={brand:"",series:"",description:"",category:"",unit:""};
 function renderEquipmentTab(b){
   const cats=[...new Set(DB.equipment.map(e=>e.category).filter(Boolean))].sort();
+  const fi=(k,ph)=>`<input class="colfilter" value="${esc(eqF[k])}" placeholder="${ph}" oninput="eqF['${k}']=this.value;renderEquipmentRows()">`;
   b.innerHTML=`
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
-      <input class="field-input" id="eqSearch" placeholder="Search brand, series, description…" value="${esc(eqSearch)}"
+      <input class="field-input" id="eqSearch" placeholder="Search everything…" value="${esc(eqSearch)}"
         style="flex:1;min-width:220px;border:1px solid var(--line);border-radius:8px;padding:8px 12px;outline:none"
         oninput="eqSearch=this.value;renderEquipmentRows()">
       <select id="eqCat" onchange="renderEquipmentRows()" style="border:1px solid var(--line);border-radius:8px;padding:8px">
         <option value="">All categories</option>${cats.map(c=>`<option>${esc(c)}</option>`).join("")}
       </select>
+      <button class="btn" onclick="eqSearch='';eqF={brand:'',series:'',description:'',category:'',unit:''};render()">Clear filters</button>
     </div>
-    <div class="card"><table class="grid">
-      <thead><tr><th>Brand</th><th>Series / Type</th><th>Description</th><th>Category</th><th>Unit</th><th class="t-right">Price</th><th></th></tr></thead>
+    <div class="card" style="overflow-x:auto"><table class="grid" style="min-width:860px">
+      <thead>
+        <tr><th>Brand</th><th>Series / Type</th><th>Description</th><th>Category</th><th>Unit</th><th class="t-right">Sell Price</th><th class="t-right">Budget Price</th><th></th></tr>
+        <tr class="filterrow">
+          <th>${fi("brand","filter…")}</th><th>${fi("series","filter…")}</th><th>${fi("description","filter…")}</th>
+          <th>${fi("category","filter…")}</th><th>${fi("unit","filter…")}</th><th></th><th></th><th></th>
+        </tr>
+      </thead>
       <tbody id="eqRows"></tbody></table></div>`;
   renderEquipmentRows();
 }
 function renderEquipmentRows(){
   const q=(eqSearch||"").toLowerCase(), cat=$("#eqCat")?.value||"";
-  const list=DB.equipment.filter(e=>(!cat||e.category===cat)&&(!q||(e.brand+" "+e.series+" "+e.description).toLowerCase().includes(q)));
+  const list=DB.equipment.filter(e=>
+    (!cat||e.category===cat)
+    &&(!q||(e.brand+" "+e.series+" "+e.description+" "+e.category).toLowerCase().includes(q))
+    &&["brand","series","description","category","unit"].every(k=>!eqF[k]||String(e[k]||"").toLowerCase().includes(eqF[k].toLowerCase()))
+  );
   $("#eqRows").innerHTML=list.length?list.map(e=>`
     <tr><td style="font-weight:600">${esc(e.brand)}</td><td>${esc(e.series)}</td>
-    <td style="max-width:340px">${esc(e.description)}</td>
+    <td style="max-width:320px">${esc(e.description)}</td>
     <td>${e.category?`<span class="pill amber">${esc(e.category)}</span>`:""}</td>
     <td>${esc(e.unit)}</td><td class="t-right num">${fmtRp(e.price)}</td>
+    <td class="t-right num" style="color:var(--muted)">${e.cost?fmtRp(e.cost):"—"}</td>
     <td class="t-right" style="white-space:nowrap">
       <button class="btn ghost small" onclick="openEquipmentModal('${e.id}')">Edit</button>
       <button class="btn ghost small danger" onclick="deleteEquipment('${e.id}')">Delete</button></td></tr>`).join("")
-  :`<tr><td colspan="7"><div class="empty">No equipment matches. Add items with “+ Add equipment”.</div></td></tr>`;
+  :`<tr><td colspan="8"><div class="empty">No equipment matches these filters.</div></td></tr>`;
 }
 function openEquipmentModal(id){
   const e=DB.equipment.find(x=>x.id===id);
@@ -508,10 +531,13 @@ function openEquipmentModal(id){
       <div class="field"><label>Series / Type</label><input id="m_series" value="${esc(e?.series||"")}" placeholder="e.g. SRX835P"></div>
     </div>
     <div class="field"><label>Description</label><input id="m_desc" value="${esc(e?.description||"")}" placeholder="e.g. 15\u2033 3-way powered loudspeaker"></div>
-    <div class="field-row c3">
+    <div class="field-row c2">
       <div class="field"><label>Category</label><input id="m_cat" value="${esc(e?.category||"")}" list="catList" placeholder="Speaker / Mixer / …"></div>
       <div class="field"><label>Unit</label><input id="m_unit" value="${esc(e?.unit||"unit")}" placeholder="unit / pcs / lot / m"></div>
-      <div class="field"><label>Price (IDR)</label><input id="m_price" type="number" min="0" value="${e?.price||""}"></div>
+    </div>
+    <div class="field-row c2">
+      <div class="field"><label>Sell price (IDR) — used in quotations</label><input id="m_price" type="number" min="0" value="${e?.price||""}"></div>
+      <div class="field"><label>Budget / capital price (IDR) — used in RAP</label><input id="m_cost" type="number" min="0" value="${e?.cost||""}"></div>
     </div>
     <datalist id="catList">${[...new Set(DB.equipment.map(x=>x.category).filter(Boolean))].map(c=>`<option>${esc(c)}</option>`).join("")}</datalist>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
@@ -520,7 +546,7 @@ function openEquipmentModal(id){
 }
 async function saveEquipmentModal(id){
   const rec={brand:$("#m_brand").value.trim(),series:$("#m_series").value.trim(),description:$("#m_desc").value.trim(),
-    category:$("#m_cat").value.trim(),unit:$("#m_unit").value.trim()||"unit",price:Number($("#m_price").value)||0};
+    category:$("#m_cat").value.trim(),unit:$("#m_unit").value.trim()||"unit",price:Number($("#m_price").value)||0,cost:Number($("#m_cost").value)||0};
   if(!rec.brand&&!rec.series&&!rec.description) return alert("Fill in at least a brand, series or description.");
   if(id){ Object.assign(DB.equipment.find(x=>x.id===id),rec); } else DB.equipment.unshift({id:uid(),...rec});
   closeModal(); render(); await persist(saveEquipment);
@@ -566,8 +592,27 @@ async function deleteTemplate(id){
 /* ================= PROJECT VIEW ================= */
 function renderProject(v,p){
   if(!p){ go({view:"home"}); return; }
-  const quotes=projectQuotes(p.id);
-  const grand=quotes.reduce((a,q)=>a+quoteGrand(q),0);
+  const quotes=kindQuotes(p.id,"quote"), raps=kindQuotes(p.id,"rap");
+  const gq=quotes.reduce((a,q)=>a+quoteGrand(q),0), gr=raps.reduce((a,q)=>a+quoteGrand(q),0);
+  const docTable=(list,kind)=>`
+    <div class="card" style="margin-bottom:22px"><table class="grid">
+      <thead><tr><th>${kind==="rap"?"RAP no.":"Quotation no."}</th><th>Title / option</th><th>Date</th><th>PPN 11%</th><th class="t-right">Subtotal</th><th class="t-right">Discount</th><th class="t-right">Grand total</th><th></th></tr></thead>
+      <tbody>${list.length?list.map(q=>`
+        <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
+          <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
+          <td>${esc(q.title||"Untitled")}</td>
+          <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
+          <td>${q.tax?'<span class="pill">included</span>':'<span class="pill amber">excluded</span>'}</td>
+          <td class="t-right num">${fmtRp(quoteSubtotal(q))}</td>
+          <td class="t-right num" style="color:var(--muted)">${quoteDiscount(q)?"− "+fmtRp(quoteDiscount(q)):"—"}</td>
+          <td class="t-right num" style="font-weight:700">${fmtRp(quoteGrand(q))}</td>
+          <td class="t-right" style="white-space:nowrap">
+            ${kind==="quote"?`<button class="btn ghost small" title="Create RAP from this quotation" onclick="event.stopPropagation();deriveRAP('${q.id}')">→ RAP</button>`:""}
+            <button class="btn ghost small" onclick="event.stopPropagation();duplicateQuote('${q.id}')">Duplicate</button>
+            <button class="btn ghost small danger" onclick="event.stopPropagation();deleteQuote('${q.id}')">Delete</button></td>
+        </tr>`).join("")
+      :`<tr><td colspan="8"><div class="empty"><span class="eyebrow">${kind==="rap"?"No RAP yet":"No quotations yet"}</span>${kind==="rap"?"Create one from scratch, or use “→ RAP” on a quotation to derive it with budget prices.":"Create the first quotation for this project."}</div></td></tr>`}
+      </tbody></table></div>`;
   v.innerHTML=`
     <div class="page-head">
       <div>
@@ -577,52 +622,66 @@ function renderProject(v,p){
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" onclick="openProjectModal(getProject('${p.id}'))">Edit details</button>
-        <button class="btn" onclick="printSummary('${p.id}')" ${quotes.length?"":"disabled"}>⤓ Export summary PDF</button>
-        <button class="btn primary" onclick="newQuote('${p.id}')">+ New quotation</button>
+        <button class="btn" onclick="exportSummaryXlsx('${p.id}')" ${(quotes.length||raps.length)?"":"disabled"}>⤓ Excel summary</button>
+        <button class="btn" onclick="printSummary('${p.id}')" ${(quotes.length||raps.length)?"":"disabled"}>⤓ PDF summary</button>
       </div>
     </div>
 
-    <div class="card" style="margin-bottom:22px"><table class="grid">
-      <thead><tr><th>Quotation no.</th><th>Title / option</th><th>Date</th><th>PPN 11%</th><th class="t-right">Subtotal</th><th class="t-right">Grand total</th><th></th></tr></thead>
-      <tbody>${quotes.length?quotes.map(q=>`
-        <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
-          <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-          <td>${esc(q.title||"Untitled")}</td>
-          <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
-          <td>${q.tax?'<span class="pill">included</span>':'<span class="pill amber">excluded</span>'}</td>
-          <td class="t-right num">${fmtRp(quoteSubtotal(q))}</td>
-          <td class="t-right num" style="font-weight:700">${fmtRp(quoteGrand(q))}</td>
-          <td class="t-right" style="white-space:nowrap">
-            <button class="btn ghost small" onclick="event.stopPropagation();duplicateQuote('${q.id}')">Duplicate</button>
-            <button class="btn ghost small danger" onclick="event.stopPropagation();deleteQuote('${q.id}')">Delete</button></td>
-        </tr>`).join("")
-      :`<tr><td colspan="7"><div class="empty"><span class="eyebrow">No quotations yet</span>Create the first quotation for this project.</div></td></tr>`}
-      </tbody></table></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="eyebrow">Quotations (selling)</span>
+      <button class="btn primary small" onclick="newQuote('${p.id}','quote')">+ New quotation</button>
+    </div>
+    ${docTable(quotes,"quote")}
 
-    ${quotes.length?`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="eyebrow" style="color:var(--amber)">RAP / Project budget estimation (internal)</span>
+      <button class="btn dark small" onclick="newQuote('${p.id}','rap')">+ New RAP</button>
+    </div>
+    ${docTable(raps,"rap")}
+
+    ${(quotes.length||raps.length)?`
     <span class="eyebrow">Project summary</span>
-    <div class="card card-pad" style="margin-top:8px;max-width:520px">
+    <div class="card card-pad" style="margin-top:8px;max-width:560px">
       <div class="totals" style="max-width:none">
         ${quotes.map(q=>`<div class="line"><span>${esc(q.quoteNumber||q.title||"Quotation")}</span><span class="num">${fmtRp(quoteGrand(q))}</span></div>`).join("")}
-        <div class="line grand"><span>All quotations</span><span class="num">${fmtRp(grand)}</span></div>
+        ${quotes.length?`<div class="line" style="font-weight:600;border-top:1px solid var(--line)"><span>Total quotations</span><span class="num">${fmtRp(gq)}</span></div>`:""}
+        ${raps.length?`<div class="line" style="color:var(--amber)"><span>Total RAP (budget)</span><span class="num">${fmtRp(gr)}</span></div>`:""}
+        ${(quotes.length&&raps.length)?`<div class="line grand"><span>Est. margin (quote − RAP)</span><span class="num" style="color:${gq-gr>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(gq-gr)}</span></div>`:""}
       </div>
     </div>`:""}`;
 }
-async function newQuote(pid){
-  const q={id:uid(),projectId:pid,quoteNumber:"",title:"Quotation "+(projectQuotes(pid).length+1),date:todayISO(),tax:true,
-    sections:[{name:"Main Equipment",items:[]}],notes:""};
+async function newQuote(pid,kind){
+  kind=kind||"quote";
+  const n=kindQuotes(pid,kind).length+1;
+  const q={id:uid(),projectId:pid,quoteNumber:"",title:(kind==="rap"?"RAP ":"Quotation ")+n,date:todayISO(),tax:true,kind,
+    discount:{type:"percent",value:0},sections:[{name:"Main Equipment",items:[]}],notes:""};
   DB.quotations.push(q);
-  await persist(saveQuotes,"Quotation created");
+  await persist(saveQuotes,(kind==="rap"?"RAP":"Quotation")+" created");
   go({view:"quote",quoteId:q.id});
+}
+async function deriveRAP(qid){
+  const src=getQuote(qid);
+  const copy=JSON.parse(JSON.stringify(src));
+  copy.id=uid(); copy.kind="rap"; copy.quoteNumber=""; copy.title="RAP — "+(src.title||src.quoteNumber||"Quotation");
+  copy.discount={type:"percent",value:0};
+  let mapped=0;
+  copy.sections.forEach(sec=>sec.items.forEach(it=>{
+    const e=DB.equipment.find(x=>x.brand.trim().toLowerCase()===String(it.brand).trim().toLowerCase()
+      && x.series.trim().toLowerCase()===String(it.series).trim().toLowerCase());
+    if(e&&e.cost>0){ it.price=e.cost; mapped++; }
+  }));
+  DB.quotations.push(copy);
+  await persist(saveQuotes,`RAP created — ${mapped} line(s) mapped to budget prices`);
+  go({view:"quote",quoteId:copy.id});
 }
 async function duplicateQuote(id){
   const q=getQuote(id);
   const copy=JSON.parse(JSON.stringify(q)); copy.id=uid(); copy.title=(q.title||"Quotation")+" (copy)"; copy.quoteNumber="";
-  DB.quotations.push(copy); render(); await persist(saveQuotes,"Quotation duplicated");
+  DB.quotations.push(copy); render(); await persist(saveQuotes,"Duplicated");
 }
 async function deleteQuote(id){
-  if(!confirm("Delete this quotation? It will also be removed from the Google Sheet.")) return;
-  DB.quotations=DB.quotations.filter(q=>q.id!==id); render(); await persist(saveQuotes,"Quotation deleted");
+  if(!confirm("Delete this document? It will also be removed from the Google Sheet.")) return;
+  DB.quotations=DB.quotations.filter(q=>q.id!==id); render(); await persist(saveQuotes,"Deleted");
 }
 
 /* ================= QUOTATION EDITOR ================= */
@@ -632,19 +691,20 @@ function renderQuote(v,q,p){
     <div class="page-head">
       <div>
         <button class="btn ghost small" onclick="go({view:'project',projectId:'${p.id}'})" style="margin-bottom:8px;padding-left:0">← ${esc(p.name)}</button>
-        <span class="eyebrow">Quotation</span>
+        <span class="eyebrow" ${q.kind==="rap"?'style="color:var(--amber)"':""}>${q.kind==="rap"?"RAP / Budget estimation (internal)":"Quotation"}</span>
         <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(480px,80vw)" value="${esc(q.title)}" placeholder="Quotation title / option name" onchange="qSet('${q.id}','title',this.value)"></h1>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" onclick="printQuote('${q.id}')">⤓ Export PDF</button>
+        <button class="btn" onclick="exportQuoteXlsx('${q.id}')">⤓ Excel</button>
+        <button class="btn" onclick="printQuote('${q.id}')">⤓ PDF</button>
         <button class="btn primary" onclick="persist(saveQuotes)">Save</button>
       </div>
     </div>
 
     <div class="card card-pad" style="margin-bottom:22px">
       <div class="field-row c3">
-        <div class="field"><label>Quotation number (manual)</label><input value="${esc(q.quoteNumber)}" placeholder="e.g. Q/SAM/2026/07-014" onchange="qSet('${q.id}','quoteNumber',this.value)"></div>
-        <div class="field"><label>Quotation date</label><input type="date" value="${esc(q.date)}" onchange="qSet('${q.id}','date',this.value)"></div>
+        <div class="field"><label>${q.kind==="rap"?"RAP":"Quotation"} number (manual)</label><input value="${esc(q.quoteNumber)}" placeholder="e.g. Q/SAM/2026/07-014" onchange="qSet('${q.id}','quoteNumber',this.value)"></div>
+        <div class="field"><label>Date</label><input type="date" value="${esc(q.date)}" onchange="qSet('${q.id}','date',this.value)"></div>
         <div class="field"><label>Tax</label>
           <select onchange="qSet('${q.id}','tax',this.value==='1')">
             <option value="1" ${q.tax?"selected":""}>Add PPN 11%</option>
@@ -660,7 +720,18 @@ function renderQuote(v,q,p){
     <div class="card card-pad" style="margin-top:24px">
       <div class="totals">
         <div class="line"><span>Subtotal</span><span class="num">${fmtRp(quoteSubtotal(q))}</span></div>
-        <div class="line"><span>PPN 11% ${q.tax?"":"(not applied)"}</span><span class="num">${fmtRp(quoteTax(q))}</span></div>
+        <div class="line" style="align-items:center">
+          <span style="display:flex;align-items:center;gap:8px">Discount
+            <select onchange="setDiscount('${q.id}','type',this.value)" style="border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-size:12px">
+              <option value="percent" ${q.discount?.type!=="amount"?"selected":""}>%</option>
+              <option value="amount" ${q.discount?.type==="amount"?"selected":""}>Rp</option>
+            </select>
+            <input type="number" min="0" step="any" value="${q.discount?.value||0}" onchange="setDiscount('${q.id}','value',Number(this.value)||0)"
+              style="width:110px;border:1px solid var(--line);border-radius:6px;padding:4px 8px;text-align:right;font-family:var(--mono)">
+          </span>
+          <span class="num" style="color:${quoteDiscount(q)?"var(--red)":"var(--muted)"}">${quoteDiscount(q)?"− "+fmtRp(quoteDiscount(q)):"—"}</span>
+        </div>
+        <div class="line"><span>PPN 11% ${q.tax?"":"(not applied)"}${quoteDiscount(q)&&q.tax?" · after discount":""}</span><span class="num">${fmtRp(quoteTax(q))}</span></div>
         <div class="line grand"><span>Grand total</span><span class="num">${fmtRp(quoteGrand(q))}</span></div>
       </div>
     </div>
@@ -724,6 +795,7 @@ function sectionHTML(q,s,si){
 /* quote mutators */
 function qSet(id,k,v){ getQuote(id)[k]=v; setDirty(true); render(); }
 function qSetSilent(id,k,v){ getQuote(id)[k]=v; setDirty(true); }
+function setDiscount(id,k,v){ const q=getQuote(id); q.discount=q.discount||{type:"percent",value:0}; q.discount[k]=v; setDirty(true); render(); }
 function addSection(id){ getQuote(id).sections.push({name:"New Section",items:[]}); setDirty(true); render(); }
 function renameSection(id,si,v){ getQuote(id).sections[si].name=v; setDirty(true); }
 function removeSection(id,si){ const q=getQuote(id); if(q.sections[si].items.length&&!confirm("Delete this section and its "+q.sections[si].items.length+" line(s)?"))return; q.sections.splice(si,1); setDirty(true); render(); }
@@ -764,14 +836,16 @@ function renderPicker(){
   $("#pkRows").innerHTML=list.length?list.map(e=>`
     <tr><td style="font-weight:600;white-space:nowrap">${esc(e.brand)}</td><td style="white-space:nowrap">${esc(e.series)}</td>
     <td style="color:var(--muted);font-size:12.5px">${esc(e.description)}</td>
-    <td class="t-right num" style="white-space:nowrap">${fmtRp(e.price)}</td>
+    <td class="t-right num" style="white-space:nowrap">${getQuote(pickerCtx.qid)?.kind==="rap"?(e.cost?fmtRp(e.cost):fmtRp(e.price)+" *"):fmtRp(e.price)}</td>
     <td class="t-right"><button class="btn small primary" onclick="pickItem('${e.id}')">Add</button></td></tr>`).join("")
   :`<tr><td style="padding:20px;text-align:center;color:var(--muted)">No matches in the equipment database.</td></tr>`;
 }
 function pickItem(eid){
   const e=DB.equipment.find(x=>x.id===eid), {qid,si}=pickerCtx;
-  getQuote(qid).sections[si].items.push({brand:e.brand,series:e.series,description:e.description,qty:1,unit:e.unit||"unit",price:e.price});
-  setDirty(true); toast(e.brand+" "+e.series+" added");
+  const q=getQuote(qid);
+  const price=(q.kind==="rap")?(e.cost>0?e.cost:e.price):e.price;
+  q.sections[si].items.push({brand:e.brand,series:e.series,description:e.description,qty:1,unit:e.unit||"unit",price});
+  setDirty(true); toast(e.brand+" "+e.series+" added"+(q.kind==="rap"&&e.cost>0?" (budget price)":""));
   render(); // re-render page behind modal
 }
 
@@ -808,11 +882,12 @@ function printQuote(qid){
     });
     rows+=`<tr class="subtotal"><td colspan="7" style="text-align:right">Subtotal — ${esc(s.name)}</td><td class="num-p" style="text-align:right">${fmtRp(sectionTotal(s))}</td></tr>`;
   });
+  const isRap=q.kind==="rap";
   $("#printArea").innerHTML=`<div class="p-doc">
-    ${docHeaderHTML("QUOTATION",p,[
+    ${docHeaderHTML(isRap?"PROJECT BUDGET (RAP)":"QUOTATION",p,[
       ["Project",p.name],["Location",p.location||"—"],
-      ["Quotation no.",q.quoteNumber||"—"],["Quotation title",q.title||"—"],
-      ["Quotation date",fmtDate(q.date)],["Exported",new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})]
+      [(isRap?"RAP no.":"Quotation no."),q.quoteNumber||"—"],["Title",q.title||"—"],
+      ["Date",fmtDate(q.date)],["Exported",new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})]
     ])}
     <table class="p-table">
       <thead><tr><th style="width:24px">No</th><th style="width:80px">Brand</th><th style="width:105px">Series / Type</th><th>Description</th><th style="width:44px;text-align:right">Qty</th><th style="width:44px">Unit</th><th style="width:92px;text-align:right">Unit Price</th><th style="width:96px;text-align:right">Total Price</th></tr></thead>
@@ -820,10 +895,49 @@ function printQuote(qid){
     </table>
     <table class="p-tot"><tbody>
       <tr><td>Subtotal</td><td class="num-p" style="text-align:right">${fmtRp(quoteSubtotal(q))}</td></tr>
+      ${quoteDiscount(q)>0?`<tr><td>${discLabel(q)}</td><td class="num-p" style="text-align:right">− ${fmtRp(quoteDiscount(q))}</td></tr>`:""}
       <tr><td>PPN 11%${q.tax?"":" (excluded)"}</td><td class="num-p" style="text-align:right">${q.tax?fmtRp(quoteTax(q)):"—"}</td></tr>
       <tr class="g"><td>GRAND TOTAL</td><td class="num-p" style="text-align:right">${fmtRp(quoteGrand(q))}</td></tr>
     </tbody></table>
     ${q.notes.trim()?`<div class="p-notes"><h4>Notes & Terms</h4><div>${esc(q.notes)}</div></div>`:""}
+    <div class="p-sign">
+      <div class="box">Prepared by,<div class="line"></div>${esc(CONFIG.COMPANY.name)}</div>
+      <div class="box">Approved by,<div class="line"></div>${esc(isRap?"Management":(p.client||"Client"))}</div>
+    </div>
+  </div>`;
+  window.print();
+}
+function printSummary(pid){
+  const p=getProject(pid), quotes=kindQuotes(pid,"quote"), raps=kindQuotes(pid,"rap");
+  const tbl=(list,label)=>{
+    if(!list.length) return "";
+    const g=list.reduce((a,q)=>a+quoteGrand(q),0);
+    return `<h4 style="font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;margin:14px 0 5px">${label}</h4>
+    <table class="p-table">
+      <thead><tr><th style="width:24px">No</th><th style="width:120px">Number</th><th>Title / Scope</th><th style="width:84px">Date</th><th style="width:96px;text-align:right">Subtotal</th><th style="width:84px;text-align:right">Discount</th><th style="width:84px;text-align:right">PPN 11%</th><th style="width:104px;text-align:right">Grand Total</th></tr></thead>
+      <tbody>${list.map((q,i)=>`<tr>
+        <td class="num-p">${i+1}</td><td class="num-p">${esc(q.quoteNumber||"—")}</td><td>${esc(q.title||"—")}</td>
+        <td class="num-p">${fmtDate(q.date)}</td>
+        <td class="num-p" style="text-align:right">${fmtRp(quoteSubtotal(q))}</td>
+        <td class="num-p" style="text-align:right">${quoteDiscount(q)?"− "+fmtRp(quoteDiscount(q)):"—"}</td>
+        <td class="num-p" style="text-align:right">${q.tax?fmtRp(quoteTax(q)):"—"}</td>
+        <td class="num-p" style="text-align:right">${fmtRp(quoteGrand(q))}</td></tr>`).join("")}
+        <tr class="subtotal"><td colspan="7" style="text-align:right">TOTAL — ${label.toUpperCase()}</td><td class="num-p" style="text-align:right">${fmtRp(g)}</td></tr>
+      </tbody></table>`;
+  };
+  const gq=quotes.reduce((a,q)=>a+quoteGrand(q),0), gr=raps.reduce((a,q)=>a+quoteGrand(q),0);
+  $("#printArea").innerHTML=`<div class="p-doc">
+    ${docHeaderHTML("PROJECT SUMMARY",p,[
+      ["Project",p.name],["Location",p.location||"—"],["Client",p.client||"—"],
+      ["Exported",new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})]
+    ])}
+    ${tbl(quotes,"Quotations")}
+    ${tbl(raps,"RAP / Budget Estimation")}
+    ${(quotes.length&&raps.length)?`<table class="p-tot"><tbody>
+      <tr><td>Total quotations</td><td class="num-p" style="text-align:right">${fmtRp(gq)}</td></tr>
+      <tr><td>Total RAP (budget)</td><td class="num-p" style="text-align:right">${fmtRp(gr)}</td></tr>
+      <tr class="g"><td>EST. MARGIN</td><td class="num-p" style="text-align:right">${fmtRp(gq-gr)}</td></tr>
+    </tbody></table>`:""}
     <div class="p-sign">
       <div class="box">Prepared by,<div class="line"></div>${esc(CONFIG.COMPANY.name)}</div>
       <div class="box">Approved by,<div class="line"></div>${esc(p.client||"Client")}</div>
@@ -831,33 +945,61 @@ function printQuote(qid){
   </div>`;
   window.print();
 }
-function printSummary(pid){
-  const p=getProject(pid), quotes=projectQuotes(pid);
-  let rows=quotes.map((q,i)=>`<tr>
-      <td class="num-p">${i+1}</td><td class="num-p">${esc(q.quoteNumber||"—")}</td><td>${esc(q.title||"—")}</td>
-      <td class="num-p">${fmtDate(q.date)}</td>
-      <td class="num-p" style="text-align:right">${fmtRp(quoteSubtotal(q))}</td>
-      <td class="num-p" style="text-align:right">${q.tax?fmtRp(quoteTax(q)):"—"}</td>
-      <td class="num-p" style="text-align:right">${fmtRp(quoteGrand(q))}</td></tr>`).join("");
-  const g=quotes.reduce((a,q)=>a+quoteGrand(q),0);
-  $("#printArea").innerHTML=`<div class="p-doc">
-    ${docHeaderHTML("QUOTATION SUMMARY",p,[
-      ["Project",p.name],["Location",p.location||"—"],["Client",p.client||"—"],
-      ["Quotations",String(quotes.length)],
-      ["Exported",new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})]
-    ])}
-    <table class="p-table">
-      <thead><tr><th style="width:24px">No</th><th style="width:130px">Quotation No.</th><th>Title / Scope</th><th style="width:90px">Date</th><th style="width:100px;text-align:right">Subtotal</th><th style="width:90px;text-align:right">PPN 11%</th><th style="width:110px;text-align:right">Grand Total</th></tr></thead>
-      <tbody>${rows}
-        <tr class="subtotal"><td colspan="6" style="text-align:right">TOTAL — ALL QUOTATIONS</td><td class="num-p" style="text-align:right">${fmtRp(g)}</td></tr>
-      </tbody>
-    </table>
-    <div class="p-sign">
-      <div class="box">Prepared by,<div class="line"></div>${esc(CONFIG.COMPANY.name)}</div>
-      <div class="box">Approved by,<div class="line"></div>${esc(p.client||"Client")}</div>
-    </div>
-  </div>`;
-  window.print();
+
+/* ================= Excel export (SheetJS) ================= */
+function needXLSX(){ if(!window.XLSX){ alert("Excel library did not load (check ad blocker / connection) — try refreshing."); return true; } return false; }
+function sheetFromAOA(aoa,widths){ const ws=XLSX.utils.aoa_to_sheet(aoa); if(widths) ws["!cols"]=widths.map(w=>({wch:w})); return ws; }
+function quoteAOA(q,p){
+  const isRap=q.kind==="rap";
+  const aoa=[
+    [CONFIG.COMPANY.name],[CONFIG.COMPANY.tagline],[],
+    [isRap?"PROJECT BUDGET (RAP)":"QUOTATION"],
+    ["Project",p.name],["Location",p.location||""],["Number",q.quoteNumber||""],
+    ["Title",q.title||""],["Date",q.date||""],["Exported",todayISO()],[],
+    ["No","Brand","Series / Type","Description","Qty","Unit","Unit Price (IDR)","Total (IDR)"]
+  ];
+  let no=0;
+  q.sections.forEach(sec=>{
+    aoa.push([sec.name.toUpperCase()]);
+    sec.items.forEach(it=>{ no++; aoa.push([no,it.brand,it.series,it.description,Number(it.qty)||0,it.unit,Number(it.price)||0,lineTotal(it)]); });
+    aoa.push(["","","","","","","Subtotal — "+sec.name,sectionTotal(sec)]);
+  });
+  aoa.push([]);
+  aoa.push(["","","","","","","Subtotal",quoteSubtotal(q)]);
+  if(quoteDiscount(q)>0) aoa.push(["","","","","","",discLabel(q),-quoteDiscount(q)]);
+  aoa.push(["","","","","","","PPN 11%"+(q.tax?"":" (excluded)"),quoteTax(q)]);
+  aoa.push(["","","","","","","GRAND TOTAL",quoteGrand(q)]);
+  if(q.notes.trim()){ aoa.push([]); aoa.push(["Notes & Terms"]); q.notes.split("\n").forEach(l=>aoa.push([l])); }
+  return aoa;
+}
+function exportQuoteXlsx(qid){
+  if(needXLSX()) return;
+  const q=getQuote(qid), p=getProject(q.projectId);
+  if(dirty) persist(saveQuotes);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,sheetFromAOA(quoteAOA(q,p),[5,16,20,44,7,8,16,16]),(q.kind==="rap"?"RAP":"Quotation").slice(0,31));
+  const fname=((q.quoteNumber||q.title||"quotation").replace(/[\\/:*?"<>|]/g,"-"))+".xlsx";
+  XLSX.writeFile(wb,fname); toast("Excel exported");
+}
+function exportSummaryXlsx(pid){
+  if(needXLSX()) return;
+  const p=getProject(pid), quotes=kindQuotes(pid,"quote"), raps=kindQuotes(pid,"rap");
+  const wb=XLSX.utils.book_new();
+  const sumAOA=[[CONFIG.COMPANY.name],["PROJECT SUMMARY — "+p.name],["Location",p.location||""],["Client",p.client||""],["Exported",todayISO()],[],
+    ["Type","No","Number","Title","Date","Subtotal","Discount","PPN 11%","Grand Total"]];
+  const push=(list,label)=>list.forEach((q,i)=>sumAOA.push([label,i+1,q.quoteNumber||"",q.title||"",q.date||"",quoteSubtotal(q),-quoteDiscount(q)||0,quoteTax(q),quoteGrand(q)]));
+  push(quotes,"Quotation"); push(raps,"RAP");
+  const gq=quotes.reduce((a,q)=>a+quoteGrand(q),0), gr=raps.reduce((a,q)=>a+quoteGrand(q),0);
+  sumAOA.push([]);
+  if(quotes.length) sumAOA.push(["","","","","","","","Total quotations",gq]);
+  if(raps.length)   sumAOA.push(["","","","","","","","Total RAP",gr]);
+  if(quotes.length&&raps.length) sumAOA.push(["","","","","","","","EST. MARGIN",gq-gr]);
+  XLSX.utils.book_append_sheet(wb,sheetFromAOA(sumAOA,[10,5,18,30,12,15,12,12,15]),"Summary");
+  quotes.concat(raps).forEach((q,i)=>{
+    const nm=((q.kind==="rap"?"RAP ":"Q ")+(q.quoteNumber||q.title||i+1)).replace(/[\\/:*?\[\]"<>|]/g,"-").slice(0,31)||("Doc"+(i+1));
+    XLSX.utils.book_append_sheet(wb,sheetFromAOA(quoteAOA(q,p),[5,16,20,44,7,8,16,16]),nm);
+  });
+  XLSX.writeFile(wb,(p.name.replace(/[\\/:*?"<>|]/g,"-"))+" - summary.xlsx"); toast("Excel exported");
 }
 
 /* ================= boot ================= */
