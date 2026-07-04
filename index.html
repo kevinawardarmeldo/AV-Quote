@@ -234,6 +234,9 @@ const CONFIG = {
     contact: "email@company.com · +62 xxx xxxx xxxx"
   }
 };
+/* Accept a full Sheet URL by mistake: extract the real ID automatically */
+{ const m=CONFIG.SPREADSHEET_ID.match(/\/d\/([A-Za-z0-9_-]{20,})/); if(m) CONFIG.SPREADSHEET_ID=m[1]; }
+
 const SHEETS = {
   Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price"],
   Projects:     ["ID","Name","Location","Client","Created"],
