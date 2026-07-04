@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AV Quotation Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+:root{
+  --ink:#101614; --muted:#5C665F; --paper:#F4F6F3; --surface:#FFFFFF;
+  --line:#DEE4DD; --accent:#0C7C59; --accent-dark:#0A5C43; --accent-soft:#E3F1EB;
+  --amber:#B4720E; --amber-soft:#F7EDDA; --red:#B3382C; --red-soft:#F7E4E1;
+  --mono:'IBM Plex Mono',monospace; --sans:'Archivo',system-ui,sans-serif;
+  --radius:10px; --shadow:0 1px 2px rgba(16,22,20,.06),0 4px 16px rgba(16,22,20,.06);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:14px;line-height:1.5}
+button{font-family:inherit;cursor:pointer}
+input,select,textarea{font-family:inherit;font-size:14px;color:var(--ink)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ---------- shell ---------- */
+.topbar{position:sticky;top:0;z-index:40;background:var(--ink);color:#EAF0EC;display:flex;align-items:center;gap:16px;padding:0 20px;height:52px}
+.topbar .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.02em}
+.brand-mark{width:22px;height:22px;border-radius:6px;background:var(--accent);display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:600;color:#fff}
+.topbar .crumb{color:#9DB0A5;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar .spacer{flex:1}
+.userchip{display:flex;align-items:center;gap:8px;font-size:12px;color:#C9D6CD}
+.userchip img{width:24px;height:24px;border-radius:50%}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 14px;font-weight:600;font-size:13px;color:var(--ink);display:inline-flex;align-items:center;gap:6px;transition:background .12s,border-color .12s}
+.btn:hover{background:#F0F3EF}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:var(--accent-dark)}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+.btn.ghost:hover{color:var(--ink);background:#EDF1EC}
+.btn.danger{color:var(--red)}
+.btn.danger:hover{background:var(--red-soft)}
+.btn.small{padding:4px 10px;font-size:12px}
+.btn.dark{background:#1D2A24;border-color:#1D2A24;color:#E5EEE8}
+.btn.dark:hover{background:#2A3B33}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 80px}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+.page-head h1{font-size:22px;font-weight:700;letter-spacing:-.01em}
+.page-head .sub{color:var(--muted);font-size:13px;margin-top:2px}
+.eyebrow{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:22px}
+.tab{padding:9px 16px;font-weight:600;font-size:13.5px;color:var(--muted);border:none;background:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.active{color:var(--ink);border-bottom-color:var(--accent)}
+.tab:hover{color:var(--ink)}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.card-pad{padding:18px 20px}
+
+/* ---------- tables ---------- */
+table.grid{width:100%;border-collapse:collapse;font-size:13.5px}
+table.grid th{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left;font-weight:600;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.grid td{padding:8px 10px;border-bottom:1px solid #ECF0EB;vertical-align:middle}
+table.grid tr:last-child td{border-bottom:none}
+table.grid tr.rowlink{cursor:pointer}
+table.grid tr.rowlink:hover td{background:#F5F8F5}
+.t-right{text-align:right}
+.pill{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:99px;background:var(--accent-soft);color:var(--accent-dark);font-weight:600}
+.pill.amber{background:var(--amber-soft);color:var(--amber)}
+
+/* ---------- forms ---------- */
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+.field label{font-size:12px;font-weight:600;color:var(--muted)}
+.field input,.field select,.field textarea{border:1px solid var(--line);border-radius:8px;padding:8px 11px;background:#fff;outline:none}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.field-row{display:grid;gap:14px}
+@media(min-width:640px){.field-row.c2{grid-template-columns:1fr 1fr}.field-row.c3{grid-template-columns:1fr 1fr 1fr}}
+.inline-input{border:1px solid transparent;border-radius:6px;padding:5px 7px;width:100%;background:transparent;outline:none}
+.inline-input:hover{border-color:var(--line)}
+.inline-input:focus{border-color:var(--accent);background:#fff;box-shadow:0 0 0 2px var(--accent-soft)}
+.inline-input.num{text-align:right}
+
+/* ---------- BoQ editor ---------- */
+.section-block{margin-bottom:22px}
+.section-head{display:flex;align-items:center;gap:10px;background:#1D2A24;color:#E7EFE9;border-radius:8px 8px 0 0;padding:8px 12px}
+.section-head::before{content:"";width:4px;height:20px;border-radius:2px;background:var(--accent);flex:none}
+.section-head input{background:transparent;border:none;color:#fff;font-weight:700;font-size:14px;letter-spacing:.02em;flex:1;outline:none;padding:2px 4px;border-radius:4px}
+.section-head input:focus{background:rgba(255,255,255,.09)}
+.section-head .btn{border-color:rgba(255,255,255,.18);background:transparent;color:#C6D4CA}
+.section-head .btn:hover{background:rgba(255,255,255,.1);color:#fff}
+.section-body{border:1px solid var(--line);border-top:none;border-radius:0 0 8px 8px;background:#fff;overflow-x:auto}
+.boq-table{min-width:820px}
+.boq-table td{padding:3px 4px}
+.boq-table .rowtools{white-space:nowrap;text-align:right}
+.rowtools button{border:none;background:none;color:#9AA79E;padding:3px 4px;border-radius:5px;font-size:13px}
+.rowtools button:hover{color:var(--ink);background:#EFF3EF}
+.rowtools button.del:hover{color:var(--red);background:var(--red-soft)}
+.section-sub{display:flex;justify-content:flex-end;gap:24px;padding:8px 14px;border-top:1px solid var(--line);background:#F8FAF8;font-weight:600}
+.addrow-bar{display:flex;gap:8px;padding:8px 10px;border-top:1px dashed var(--line)}
+
+.totals{margin-left:auto;max-width:420px}
+.totals .line{display:flex;justify-content:space-between;padding:7px 4px;font-size:14px}
+.totals .line.grand{border-top:2px solid var(--ink);font-weight:700;font-size:16px;margin-top:4px;padding-top:10px}
+
+/* ---------- modal / toast ---------- */
+.modal-back{position:fixed;inset:0;background:rgba(12,18,15,.45);display:none;align-items:flex-start;justify-content:center;z-index:100;padding:6vh 16px}
+.modal-back.open{display:flex}
+.modal{background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.25);width:100%;max-width:560px;max-height:86vh;display:flex;flex-direction:column}
+.modal.wide{max-width:820px}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}
+.modal-head h3{font-size:16px}
+.modal-body{padding:18px 20px;overflow-y:auto}
+.modal-foot{padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px}
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:99px;font-size:13px;font-weight:600;opacity:0;transition:opacity .2s;z-index:200;pointer-events:none}
+#toast.show{opacity:1}
+
+/* ---------- login ---------- */
+.login-screen{min-height:100vh;display:grid;place-items:center;background:
+  radial-gradient(1200px 500px at 70% -10%,rgba(12,124,89,.14),transparent),var(--ink)}
+.login-card{background:#fff;border-radius:16px;padding:40px 38px;max-width:420px;width:92%;box-shadow:0 30px 80px rgba(0,0,0,.4)}
+.login-card h1{font-size:22px;letter-spacing:-.01em;margin:14px 0 6px}
+.login-card p{color:var(--muted);font-size:13.5px;margin-bottom:22px}
+.gbtn{width:100%;justify-content:center;padding:11px;font-size:14px}
+.cfg-warn{background:var(--amber-soft);color:var(--amber);border-radius:8px;padding:10px 12px;font-size:12.5px;margin-top:16px;font-family:var(--mono)}
+.login-meter{display:flex;gap:3px;height:26px;align-items:flex-end;margin-bottom:4px}
+.login-meter span{width:5px;background:var(--accent);border-radius:2px;opacity:.9}
+
+/* ---------- empty state ---------- */
+.empty{text-align:center;padding:48px 20px;color:var(--muted)}
+.empty .eyebrow{display:block;margin-bottom:8px}
+
+/* ---------- print ---------- */
+#printArea{display:none}
+@media print{
+  body{background:#fff}
+  #app,.topbar,#toast{display:none!important}
+  #printArea{display:block;font-family:var(--sans);color:#111;font-size:11.5px}
+  .p-doc{padding:0}
+  .p-head{display:flex;justify-content:space-between;border-bottom:3px solid #111;padding-bottom:12px;margin-bottom:6px}
+  .p-co{font-size:15px;font-weight:800;letter-spacing:.01em}
+  .p-co small{display:block;font-weight:400;color:#444;font-size:10px;margin-top:2px;white-space:pre-line}
+  .p-doc-title{text-align:right}
+  .p-doc-title h2{font-size:19px;letter-spacing:.12em;font-weight:800}
+  .p-meta{width:100%;border-collapse:collapse;margin:10px 0 14px}
+  .p-meta td{padding:2.5px 0;font-size:11.5px;vertical-align:top}
+  .p-meta td.k{width:110px;color:#555;font-weight:600}
+  .p-table{width:100%;border-collapse:collapse;margin-bottom:4px}
+  .p-table th{background:#111;color:#fff;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;padding:6px 7px;text-align:left}
+  .p-table td{border-bottom:.6pt solid #CCC;padding:5px 7px;vertical-align:top}
+  .p-table .sec td{background:#EDEDED;font-weight:700;font-size:11px;letter-spacing:.03em;border-bottom:.6pt solid #999}
+  .p-table .subtotal td{font-weight:700;border-bottom:1.2pt solid #666;background:#FAFAFA}
+  .p-tot{width:46%;margin-left:auto;border-collapse:collapse;margin-top:8px}
+  .p-tot td{padding:4px 7px;font-size:11.5px}
+  .p-tot .g td{border-top:2px solid #111;font-weight:800;font-size:13px}
+  .p-notes{margin-top:18px;page-break-inside:avoid}
+  .p-notes h4{font-size:10px;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid #999;padding-bottom:4px;margin-bottom:6px}
+  .p-notes div{white-space:pre-wrap;font-size:10.5px;color:#333}
+  .p-sign{margin-top:34px;display:flex;justify-content:space-between;page-break-inside:avoid}
+  .p-sign .box{width:220px;font-size:11px}
+  .p-sign .line{border-bottom:1px solid #111;height:52px;margin-bottom:5px}
+  .num-p{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+  tr{page-break-inside:avoid}
+  @page{margin:16mm 14mm}
+}
+</style>
+</head>
+<body>
+<!-- ================= LOGIN ================= -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <div class="login-meter" aria-hidden="true">
+      <span style="height:8px"></span><span style="height:14px"></span><span style="height:22px"></span>
+      <span style="height:26px"></span><span style="height:18px"></span><span style="height:10px"></span>
+      <span style="height:16px"></span><span style="height:24px"></span><span style="height:12px"></span>
+    </div>
+    <span class="eyebrow">Internal tool · restricted access</span>
+    <h1>AV Quotation Builder</h1>
+    <p>Sign in with an authorized Google account. Project, equipment and quotation data live in a private Google Sheet.</p>
+    <button class="btn primary gbtn" id="signInBtn">
+      <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#fff" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/></svg>
+      Sign in with Google
+    </button>
+    <div id="cfgWarn" class="cfg-warn" style="display:none"></div>
+    <div id="loginErr" class="cfg-warn" style="display:none;background:var(--red-soft);color:var(--red)"></div>
+  </div>
+</div>
+
+<!-- ================= APP ================= -->
+<div id="app" style="display:none">
+  <div class="topbar">
+    <div class="brand"><span class="brand-mark">AV</span> Quotation Builder</div>
+    <span class="crumb" id="crumb"></span>
+    <div class="spacer"></div>
+    <span id="saveState" style="font-family:var(--mono);font-size:11px;color:#8FA396"></span>
+    <div class="userchip" id="userChip"></div>
+    <button class="btn small dark" id="signOutBtn">Sign out</button>
+  </div>
+  <div class="wrap" id="view"></div>
+</div>
+
+<!-- ================= MODAL ================= -->
+<div class="modal-back" id="modalBack">
+  <div class="modal" id="modalBox">
+    <div class="modal-head"><h3 id="modalTitle"></h3><button class="btn ghost small" onclick="closeModal()">✕</button></div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-foot" id="modalFoot"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="printArea"></div>
+
+<script>
+/* =====================================================================
+   CONFIGURATION — edit these four values before deploying
+   ===================================================================== */
+const CONFIG = {
+  // 1. OAuth 2.0 Client ID from Google Cloud Console (type: Web application)
+  CLIENT_ID: "726251860471-99131cjfnrcblmbvssms4jtb4kdf8o5u.apps.googleusercontent.com",
+
+  // 2. The ID of your Google Sheet (from its URL:
+  //    https://docs.google.com/spreadsheets/d/<THIS_PART>/edit)
+  SPREADSHEET_ID: "https://docs.google.com/spreadsheets/d/1LK76WXTTUXxeqLvfRSjUEGSX0cvndGNgRQ20grfQkBU/edit",
+
+  // 3. Extra allowlist (soft gate shown in the UI). Real security comes from
+  //    the Sheet's own sharing settings — see README. Leave [] to allow any
+  //    account that can open the Sheet.
+  ALLOWED_EMAILS: [],
+
+  // 4. Company block printed on the PDF header
+  COMPANY: {
+    name: "PT. Sinergi Anugrah Mandiri",
+    tagline: "Sinergi Tech",
+    address: "Jakarta, Indonesia",
+    contact: "kevin@sinergiacoustic.com · +62 8180 3243	584"
+  }
+};
+const SHEETS = {
+  Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price"],
+  Projects:     ["ID","Name","Location","Client","Created"],
+  Quotations:   ["ID","ProjectID","QuoteNumber","Title","Date","Tax","DataJSON","Updated"],
+  NoteTemplates:["ID","Name","Content"]
+};
+
+/* ================= state ================= */
+let token=null, tokenExp=0, userEmail="", userPic="";
+let DB={equipment:[],projects:[],quotations:[],templates:[]};
+let route={view:"home",tab:"projects",projectId:null,quoteId:null};
+let dirty=false;
+
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const fmtRp=n=>new Intl.NumberFormat("id-ID",{style:"currency",currency:"IDR",maximumFractionDigits:0}).format(Number(n)||0);
+const fmtN=n=>new Intl.NumberFormat("id-ID",{maximumFractionDigits:2}).format(Number(n)||0);
+const todayISO=()=>new Date().toISOString().slice(0,10);
+const fmtDate=d=>{ if(!d) return "—"; const dt=new Date(d+"T00:00:00"); return dt.toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"}); };
+function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2400);}
+function setDirty(v){dirty=v;$("#saveState").textContent=v?"● unsaved changes":"";}
+
+/* ================= auth ================= */
+let tokenClient=null;
+function initAuth(){
+  const warn=[];
+  if(CONFIG.CLIENT_ID.startsWith("PASTE_")) warn.push("CLIENT_ID is not set");
+  if(CONFIG.SPREADSHEET_ID.startsWith("PASTE_")) warn.push("SPREADSHEET_ID is not set");
+  if(warn.length){const w=$("#cfgWarn");w.style.display="block";w.textContent="⚠ Setup needed: "+warn.join(" · ")+". Edit CONFIG at the top of index.html (see README).";}
+  const timer=setInterval(()=>{
+    if(window.google?.accounts?.oauth2){
+      clearInterval(timer);
+      tokenClient=google.accounts.oauth2.initTokenClient({
+        client_id:CONFIG.CLIENT_ID,
+        scope:"https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
+        callback:()=>{}
+      });
+    }
+  },100);
+}
+function requestToken(prompt){
+  return new Promise((res,rej)=>{
+    if(!tokenClient) return rej(new Error("Google auth library not loaded yet — try again."));
+    tokenClient.callback=r=>{
+      if(r.error) return rej(new Error(r.error));
+      token=r.access_token; tokenExp=Date.now()+(r.expires_in-60)*1000; res();
+    };
+    tokenClient.requestAccessToken({prompt});
+  });
+}
+async function ensureToken(){ if(!token||Date.now()>tokenExp) await requestToken(""); }
+async function signIn(){
+  const errBox=$("#loginErr"); errBox.style.display="none";
+  try{
+    await requestToken("consent");
+    const ui=await (await fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+token}})).json();
+    userEmail=ui.email||""; userPic=ui.picture||"";
+    if(CONFIG.ALLOWED_EMAILS.length && !CONFIG.ALLOWED_EMAILS.map(e=>e.toLowerCase()).includes(userEmail.toLowerCase()))
+      throw new Error(userEmail+" is not on the authorized list for this tool.");
+    await ensureTabs();
+    await loadAll();
+    $("#loginScreen").style.display="none"; $("#app").style.display="block";
+    $("#userChip").innerHTML=(userPic?`<img src="${esc(userPic)}" alt="">`:"")+`<span>${esc(userEmail)}</span>`;
+    render();
+  }catch(e){
+    token=null;
+    errBox.style.display="block";
+    errBox.textContent="✕ "+(e.message||"Sign-in failed. Check that this URL is added to Authorized JavaScript origins and that your account can open the Sheet.");
+  }
+}
+function signOut(){
+  if(dirty && !confirm("You have unsaved changes. Sign out anyway?")) return;
+  if(token) google.accounts.oauth2.revoke(token,()=>{});
+  location.reload();
+}
+
+/* ================= Sheets API layer ================= */
+const API="https://sheets.googleapis.com/v4/spreadsheets/";
+async function api(path,opts={}){
+  await ensureToken();
+  const r=await fetch(API+CONFIG.SPREADSHEET_ID+path,{
+    ...opts,
+    headers:{Authorization:"Bearer "+token,"Content-Type":"application/json",...(opts.headers||{})}
+  });
+  if(r.status===401){ token=null; await ensureToken(); return api(path,opts); }
+  if(!r.ok){
+    const body=await r.json().catch(()=>({}));
+    const msg=body.error?.message||r.statusText;
+    if(r.status===403) throw new Error("No access to the Sheet ("+msg+"). Make sure "+userEmail+" has Editor access to the spreadsheet.");
+    throw new Error("Sheets API: "+msg);
+  }
+  return r.json();
+}
+async function ensureTabs(){
+  const meta=await api("?fields=sheets.properties.title");
+  const existing=(meta.sheets||[]).map(s=>s.properties.title);
+  const missing=Object.keys(SHEETS).filter(t=>!existing.includes(t));
+  if(missing.length){
+    await api(":batchUpdate",{method:"POST",body:JSON.stringify({requests:missing.map(t=>({addSheet:{properties:{title:t}}}))})});
+    for(const t of missing){
+      await api(`/values/${encodeURIComponent(t)}!A1?valueInputOption=RAW`,{method:"PUT",
+        body:JSON.stringify({values:[SHEETS[t]]})});
+    }
+  }
+}
+async function loadAll(){
+  const ranges=Object.keys(SHEETS).map(t=>`ranges=${encodeURIComponent(t+"!A2:H")}`).join("&");
+  const res=await api("/values:batchGet?"+ranges);
+  const [eq,pr,qu,nt]=res.valueRanges.map(v=>v.values||[]);
+  DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0}));
+  DB.projects=pr.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",location:r[2]||"",client:r[3]||"",created:r[4]||""}));
+  DB.quotations=qu.filter(r=>r[0]).map(r=>{
+    let d={}; try{d=JSON.parse(r[6]||"{}")}catch(e){}
+    return {id:r[0],projectId:r[1],quoteNumber:r[2]||"",title:r[3]||"",date:r[4]||"",tax:r[5]==="TRUE"||r[5]===true||r[5]==="1",
+            sections:d.sections||[],notes:d.notes||"",updated:r[7]||""};
+  });
+  DB.templates=nt.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",content:r[2]||""}));
+}
+async function saveTab(tab,rows){
+  await api(`/values/${encodeURIComponent(tab)}!A2:H:clear`,{method:"POST",body:"{}"});
+  if(rows.length){
+    await api(`/values/${encodeURIComponent(tab)}!A2?valueInputOption=RAW`,{method:"PUT",body:JSON.stringify({values:rows})});
+  }
+}
+const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price]));
+const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created]));
+const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes}),new Date().toISOString()]));
+const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
+async function persist(fn,msg){
+  try{ $("#saveState").textContent="saving…"; await fn(); setDirty(false); toast(msg||"Saved to Google Sheet"); }
+  catch(e){ $("#saveState").textContent=""; alert("Save failed: "+e.message); }
+}
+
+/* ================= helpers: totals ================= */
+const lineTotal=i=>(Number(i.qty)||0)*(Number(i.price)||0);
+const sectionTotal=s=>s.items.reduce((a,i)=>a+lineTotal(i),0);
+const quoteSubtotal=q=>q.sections.reduce((a,s)=>a+sectionTotal(s),0);
+const quoteTax=q=>q.tax?Math.round(quoteSubtotal(q)*0.11):0;
+const quoteGrand=q=>quoteSubtotal(q)+quoteTax(q);
+const getProject=id=>DB.projects.find(p=>p.id===id);
+const getQuote=id=>DB.quotations.find(q=>q.id===id);
+const projectQuotes=pid=>DB.quotations.filter(q=>q.projectId===pid);
+
+/* ================= router ================= */
+function go(r){ if(dirty && !confirm("You have unsaved changes on this quotation. Leave without saving?")) return; setDirty(false); route={...route,...r}; render(); window.scrollTo(0,0); }
+function render(){
+  const v=$("#view"), crumb=$("#crumb");
+  if(route.view==="home"){ crumb.textContent=""; renderHome(v); }
+  else if(route.view==="project"){ const p=getProject(route.projectId); crumb.textContent="/ "+(p?.name||""); renderProject(v,p); }
+  else if(route.view==="quote"){ const q=getQuote(route.quoteId); const p=getProject(q?.projectId); crumb.textContent="/ "+(p?.name||"")+" / "+(q?.quoteNumber||q?.title||"quotation"); renderQuote(v,q,p); }
+}
+
+/* ================= HOME ================= */
+function renderHome(v){
+  const tab=route.tab;
+  v.innerHTML=`
+    <div class="page-head">
+      <div><span class="eyebrow">Workspace</span><h1>Projects &amp; Database</h1>
+      <div class="sub">Data source: Google Sheet · signed in as ${esc(userEmail)}</div></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="reloadData()">↻ Reload</button>
+        ${tab==="projects"?`<button class="btn primary" onclick="openProjectModal()">+ New project</button>`
+         :tab==="equipment"?`<button class="btn primary" onclick="openEquipmentModal()">+ Add equipment</button>`
+         :`<button class="btn primary" onclick="openTemplateModal()">+ New template</button>`}
+      </div>
+    </div>
+    <div class="tabs">
+      <button class="tab ${tab==="projects"?"active":""}" onclick="route.tab='projects';render()">Projects</button>
+      <button class="tab ${tab==="equipment"?"active":""}" onclick="route.tab='equipment';render()">Equipment</button>
+      <button class="tab ${tab==="templates"?"active":""}" onclick="route.tab='templates';render()">Note templates</button>
+    </div>
+    <div id="tabBody"></div>`;
+  const b=$("#tabBody");
+  if(tab==="projects") renderProjectList(b);
+  else if(tab==="equipment") renderEquipmentTab(b);
+  else renderTemplatesTab(b);
+}
+async function reloadData(){ try{ await loadAll(); render(); toast("Data reloaded from Sheet"); }catch(e){ alert(e.message); } }
+
+function renderProjectList(b){
+  if(!DB.projects.length){ b.innerHTML=`<div class="card"><div class="empty"><span class="eyebrow">No projects yet</span>Create your first project to start building quotations.</div></div>`; return; }
+  b.innerHTML=`<div class="card"><table class="grid">
+    <thead><tr><th>Project</th><th>Location</th><th>Client</th><th>Quotations</th><th>Created</th><th></th></tr></thead>
+    <tbody>${DB.projects.map(p=>`
+      <tr class="rowlink" onclick="go({view:'project',projectId:'${p.id}'})">
+        <td style="font-weight:600">${esc(p.name)}</td>
+        <td>${esc(p.location)}</td>
+        <td>${esc(p.client)}</td>
+        <td><span class="pill">${projectQuotes(p.id).length}</span></td>
+        <td class="num" style="font-size:12px;color:var(--muted)">${esc(p.created)}</td>
+        <td class="t-right"><button class="btn ghost small danger" onclick="event.stopPropagation();deleteProject('${p.id}')">Delete</button></td>
+      </tr>`).join("")}
+    </tbody></table></div>`;
+}
+function openProjectModal(p){
+  openModal(p?"Edit project":"New project",`
+    <div class="field"><label>Project name</label><input id="m_name" value="${esc(p?.name||"")}" placeholder="e.g. Paragon Multifunction Room"></div>
+    <div class="field-row c2">
+      <div class="field"><label>Location</label><input id="m_loc" value="${esc(p?.location||"")}" placeholder="e.g. Jakarta"></div>
+      <div class="field"><label>Client</label><input id="m_client" value="${esc(p?.client||"")}" placeholder="optional"></div>
+    </div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="saveProjectModal('${p?.id||""}')">${p?"Save changes":"Create project"}</button>`);
+  $("#m_name").focus();
+}
+async function saveProjectModal(id){
+  const name=$("#m_name").value.trim();
+  if(!name) return alert("Project name is required.");
+  if(id){ const p=getProject(id); p.name=name; p.location=$("#m_loc").value.trim(); p.client=$("#m_client").value.trim(); }
+  else DB.projects.unshift({id:uid(),name,location:$("#m_loc").value.trim(),client:$("#m_client").value.trim(),created:todayISO()});
+  closeModal(); render(); await persist(saveProjects);
+}
+async function deleteProject(id){
+  const n=projectQuotes(id).length;
+  if(!confirm("Delete this project"+(n?` and its ${n} quotation(s)`:"")+"? This also removes it from the Google Sheet.")) return;
+  DB.projects=DB.projects.filter(p=>p.id!==id);
+  DB.quotations=DB.quotations.filter(q=>q.projectId!==id);
+  render(); await persist(async()=>{await saveProjects();await saveQuotes();},"Project deleted");
+}
+
+/* ================= EQUIPMENT TAB ================= */
+let eqSearch="";
+function renderEquipmentTab(b){
+  const cats=[...new Set(DB.equipment.map(e=>e.category).filter(Boolean))].sort();
+  b.innerHTML=`
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <input class="field-input" id="eqSearch" placeholder="Search brand, series, description…" value="${esc(eqSearch)}"
+        style="flex:1;min-width:220px;border:1px solid var(--line);border-radius:8px;padding:8px 12px;outline:none"
+        oninput="eqSearch=this.value;renderEquipmentRows()">
+      <select id="eqCat" onchange="renderEquipmentRows()" style="border:1px solid var(--line);border-radius:8px;padding:8px">
+        <option value="">All categories</option>${cats.map(c=>`<option>${esc(c)}</option>`).join("")}
+      </select>
+    </div>
+    <div class="card"><table class="grid">
+      <thead><tr><th>Brand</th><th>Series / Type</th><th>Description</th><th>Category</th><th>Unit</th><th class="t-right">Price</th><th></th></tr></thead>
+      <tbody id="eqRows"></tbody></table></div>`;
+  renderEquipmentRows();
+}
+function renderEquipmentRows(){
+  const q=(eqSearch||"").toLowerCase(), cat=$("#eqCat")?.value||"";
+  const list=DB.equipment.filter(e=>(!cat||e.category===cat)&&(!q||(e.brand+" "+e.series+" "+e.description).toLowerCase().includes(q)));
+  $("#eqRows").innerHTML=list.length?list.map(e=>`
+    <tr><td style="font-weight:600">${esc(e.brand)}</td><td>${esc(e.series)}</td>
+    <td style="max-width:340px">${esc(e.description)}</td>
+    <td>${e.category?`<span class="pill amber">${esc(e.category)}</span>`:""}</td>
+    <td>${esc(e.unit)}</td><td class="t-right num">${fmtRp(e.price)}</td>
+    <td class="t-right" style="white-space:nowrap">
+      <button class="btn ghost small" onclick="openEquipmentModal('${e.id}')">Edit</button>
+      <button class="btn ghost small danger" onclick="deleteEquipment('${e.id}')">Delete</button></td></tr>`).join("")
+  :`<tr><td colspan="7"><div class="empty">No equipment matches. Add items with “+ Add equipment”.</div></td></tr>`;
+}
+function openEquipmentModal(id){
+  const e=DB.equipment.find(x=>x.id===id);
+  openModal(e?"Edit equipment":"Add equipment",`
+    <div class="field-row c2">
+      <div class="field"><label>Brand</label><input id="m_brand" value="${esc(e?.brand||"")}" placeholder="e.g. JBL"></div>
+      <div class="field"><label>Series / Type</label><input id="m_series" value="${esc(e?.series||"")}" placeholder="e.g. SRX835P"></div>
+    </div>
+    <div class="field"><label>Description</label><input id="m_desc" value="${esc(e?.description||"")}" placeholder="e.g. 15\u2033 3-way powered loudspeaker"></div>
+    <div class="field-row c3">
+      <div class="field"><label>Category</label><input id="m_cat" value="${esc(e?.category||"")}" list="catList" placeholder="Speaker / Mixer / …"></div>
+      <div class="field"><label>Unit</label><input id="m_unit" value="${esc(e?.unit||"unit")}" placeholder="unit / pcs / lot / m"></div>
+      <div class="field"><label>Price (IDR)</label><input id="m_price" type="number" min="0" value="${e?.price||""}"></div>
+    </div>
+    <datalist id="catList">${[...new Set(DB.equipment.map(x=>x.category).filter(Boolean))].map(c=>`<option>${esc(c)}</option>`).join("")}</datalist>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="saveEquipmentModal('${id||""}')">${e?"Save changes":"Add to database"}</button>`);
+  $("#m_brand").focus();
+}
+async function saveEquipmentModal(id){
+  const rec={brand:$("#m_brand").value.trim(),series:$("#m_series").value.trim(),description:$("#m_desc").value.trim(),
+    category:$("#m_cat").value.trim(),unit:$("#m_unit").value.trim()||"unit",price:Number($("#m_price").value)||0};
+  if(!rec.brand&&!rec.series&&!rec.description) return alert("Fill in at least a brand, series or description.");
+  if(id){ Object.assign(DB.equipment.find(x=>x.id===id),rec); } else DB.equipment.unshift({id:uid(),...rec});
+  closeModal(); render(); await persist(saveEquipment);
+}
+async function deleteEquipment(id){
+  if(!confirm("Delete this item from the equipment database?")) return;
+  DB.equipment=DB.equipment.filter(x=>x.id!==id); render(); await persist(saveEquipment,"Equipment deleted");
+}
+
+/* ================= NOTE TEMPLATES TAB ================= */
+function renderTemplatesTab(b){
+  b.innerHTML=DB.templates.length?`<div class="card"><table class="grid">
+    <thead><tr><th style="width:220px">Template name</th><th>Content</th><th></th></tr></thead>
+    <tbody>${DB.templates.map(t=>`
+      <tr><td style="font-weight:600">${esc(t.name)}</td>
+      <td style="white-space:pre-wrap;color:var(--muted);font-size:12.5px;max-width:520px">${esc(t.content.length>260?t.content.slice(0,260)+"…":t.content)}</td>
+      <td class="t-right" style="white-space:nowrap">
+        <button class="btn ghost small" onclick="openTemplateModal('${t.id}')">Edit</button>
+        <button class="btn ghost small danger" onclick="deleteTemplate('${t.id}')">Delete</button></td></tr>`).join("")}
+    </tbody></table></div>`
+  :`<div class="card"><div class="empty"><span class="eyebrow">No note templates</span>Templates are reusable notes (payment terms, validity, exclusions) you can drop under any BoQ.</div></div>`;
+}
+function openTemplateModal(id){
+  const t=DB.templates.find(x=>x.id===id);
+  openModal(t?"Edit template":"New note template",`
+    <div class="field"><label>Template name</label><input id="m_tname" value="${esc(t?.name||"")}" placeholder="e.g. Standard terms — 50% DP"></div>
+    <div class="field"><label>Content</label><textarea id="m_tcontent" rows="9" placeholder="1. Price validity: 14 days&#10;2. Payment: 50% down payment, 50% on delivery&#10;3. Delivery time: 4–6 weeks after PO">${esc(t?.content||"")}</textarea></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="saveTemplateModal('${id||""}')">${t?"Save changes":"Create template"}</button>`);
+}
+async function saveTemplateModal(id){
+  const name=$("#m_tname").value.trim(), content=$("#m_tcontent").value;
+  if(!name) return alert("Template name is required.");
+  if(id){ const t=DB.templates.find(x=>x.id===id); t.name=name; t.content=content; }
+  else DB.templates.unshift({id:uid(),name,content});
+  closeModal(); render(); await persist(saveTemplates);
+}
+async function deleteTemplate(id){
+  if(!confirm("Delete this template?")) return;
+  DB.templates=DB.templates.filter(x=>x.id!==id); render(); await persist(saveTemplates,"Template deleted");
+}
+
+/* ================= PROJECT VIEW ================= */
+function renderProject(v,p){
+  if(!p){ go({view:"home"}); return; }
+  const quotes=projectQuotes(p.id);
+  const grand=quotes.reduce((a,q)=>a+quoteGrand(q),0);
+  v.innerHTML=`
+    <div class="page-head">
+      <div>
+        <button class="btn ghost small" onclick="go({view:'home'})" style="margin-bottom:8px;padding-left:0">← All projects</button>
+        <span class="eyebrow">Project</span><h1>${esc(p.name)}</h1>
+        <div class="sub">${esc(p.location||"No location")} ${p.client?"· "+esc(p.client):""}</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" onclick="openProjectModal(getProject('${p.id}'))">Edit details</button>
+        <button class="btn" onclick="printSummary('${p.id}')" ${quotes.length?"":"disabled"}>⤓ Export summary PDF</button>
+        <button class="btn primary" onclick="newQuote('${p.id}')">+ New quotation</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:22px"><table class="grid">
+      <thead><tr><th>Quotation no.</th><th>Title / option</th><th>Date</th><th>PPN 11%</th><th class="t-right">Subtotal</th><th class="t-right">Grand total</th><th></th></tr></thead>
+      <tbody>${quotes.length?quotes.map(q=>`
+        <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
+          <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
+          <td>${esc(q.title||"Untitled")}</td>
+          <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
+          <td>${q.tax?'<span class="pill">included</span>':'<span class="pill amber">excluded</span>'}</td>
+          <td class="t-right num">${fmtRp(quoteSubtotal(q))}</td>
+          <td class="t-right num" style="font-weight:700">${fmtRp(quoteGrand(q))}</td>
+          <td class="t-right" style="white-space:nowrap">
+            <button class="btn ghost small" onclick="event.stopPropagation();duplicateQuote('${q.id}')">Duplicate</button>
+            <button class="btn ghost small danger" onclick="event.stopPropagation();deleteQuote('${q.id}')">Delete</button></td>
+        </tr>`).join("")
+      :`<tr><td colspan="7"><div class="empty"><span class="eyebrow">No quotations yet</span>Create the first quotation for this project.</div></td></tr>`}
+      </tbody></table></div>
+
+    ${quotes.length?`
+    <span class="eyebrow">Project summary</span>
+    <div class="card card-pad" style="margin-top:8px;max-width:520px">
+      <div class="totals" style="max-width:none">
+        ${quotes.map(q=>`<div class="line"><span>${esc(q.quoteNumber||q.title||"Quotation")}</span><span class="num">${fmtRp(quoteGrand(q))}</span></div>`).join("")}
+        <div class="line grand"><span>All quotations</span><span class="num">${fmtRp(grand)}</span></div>
+      </div>
+    </div>`:""}`;
+}
+async function newQuote(pid){
+  const q={id:uid(),projectId:pid,quoteNumber:"",title:"Quotation "+(projectQuotes(pid).length+1),date:todayISO(),tax:true,
+    sections:[{name:"Main Equipment",items:[]}],notes:""};
+  DB.quotations.push(q);
+  await persist(saveQuotes,"Quotation created");
+  go({view:"quote",quoteId:q.id});
+}
+async function duplicateQuote(id){
+  const q=getQuote(id);
+  const copy=JSON.parse(JSON.stringify(q)); copy.id=uid(); copy.title=(q.title||"Quotation")+" (copy)"; copy.quoteNumber="";
+  DB.quotations.push(copy); render(); await persist(saveQuotes,"Quotation duplicated");
+}
+async function deleteQuote(id){
+  if(!confirm("Delete this quotation? It will also be removed from the Google Sheet.")) return;
+  DB.quotations=DB.quotations.filter(q=>q.id!==id); render(); await persist(saveQuotes,"Quotation deleted");
+}
+
+/* ================= QUOTATION EDITOR ================= */
+function renderQuote(v,q,p){
+  if(!q||!p){ go({view:"home"}); return; }
+  v.innerHTML=`
+    <div class="page-head">
+      <div>
+        <button class="btn ghost small" onclick="go({view:'project',projectId:'${p.id}'})" style="margin-bottom:8px;padding-left:0">← ${esc(p.name)}</button>
+        <span class="eyebrow">Quotation</span>
+        <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(480px,80vw)" value="${esc(q.title)}" placeholder="Quotation title / option name" onchange="qSet('${q.id}','title',this.value)"></h1>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" onclick="printQuote('${q.id}')">⤓ Export PDF</button>
+        <button class="btn primary" onclick="persist(saveQuotes)">Save</button>
+      </div>
+    </div>
+
+    <div class="card card-pad" style="margin-bottom:22px">
+      <div class="field-row c3">
+        <div class="field"><label>Quotation number (manual)</label><input value="${esc(q.quoteNumber)}" placeholder="e.g. Q/SAM/2026/07-014" onchange="qSet('${q.id}','quoteNumber',this.value)"></div>
+        <div class="field"><label>Quotation date</label><input type="date" value="${esc(q.date)}" onchange="qSet('${q.id}','date',this.value)"></div>
+        <div class="field"><label>Tax</label>
+          <select onchange="qSet('${q.id}','tax',this.value==='1')">
+            <option value="1" ${q.tax?"selected":""}>Add PPN 11%</option>
+            <option value="0" ${q.tax?"":"selected"}>No tax (exclude PPN)</option>
+          </select></div>
+      </div>
+      <div class="sub" style="color:var(--muted);font-size:12px">Header on the PDF will show: export date · project “${esc(p.name)}” · ${esc(p.location||"no location")} · quotation number above.</div>
+    </div>
+
+    <div id="sections">${q.sections.map((s,si)=>sectionHTML(q,s,si)).join("")}</div>
+    <button class="btn dark" onclick="addSection('${q.id}')">+ Add section</button>
+
+    <div class="card card-pad" style="margin-top:24px">
+      <div class="totals">
+        <div class="line"><span>Subtotal</span><span class="num">${fmtRp(quoteSubtotal(q))}</span></div>
+        <div class="line"><span>PPN 11% ${q.tax?"":"(not applied)"}</span><span class="num">${fmtRp(quoteTax(q))}</span></div>
+        <div class="line grand"><span>Grand total</span><span class="num">${fmtRp(quoteGrand(q))}</span></div>
+      </div>
+    </div>
+
+    <div class="card card-pad" style="margin-top:22px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <span class="eyebrow">Notes (printed under the BoQ)</span>
+        <div style="display:flex;gap:8px">
+          <select id="tplSelect" style="border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px">
+            <option value="">Insert from template…</option>
+            ${DB.templates.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join("")}
+          </select>
+          <button class="btn small" onclick="insertTemplate('${q.id}')">Insert</button>
+          <button class="btn small" onclick="saveNotesAsTemplate('${q.id}')">Save as template</button>
+        </div>
+      </div>
+      <textarea id="notesBox" rows="7" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;outline:none"
+        placeholder="Terms & conditions, validity, delivery time, exclusions…"
+        oninput="qSetSilent('${q.id}','notes',this.value)">${esc(q.notes)}</textarea>
+    </div>`;
+}
+function sectionHTML(q,s,si){
+  return `<div class="section-block">
+    <div class="section-head">
+      <input value="${esc(s.name)}" placeholder="Section name (e.g. AV Control Room)" onchange="renameSection('${q.id}',${si},this.value)">
+      <button class="btn small" onclick="moveSection('${q.id}',${si},-1)" title="Move up">↑</button>
+      <button class="btn small" onclick="moveSection('${q.id}',${si},1)" title="Move down">↓</button>
+      <button class="btn small" onclick="removeSection('${q.id}',${si})">Delete</button>
+    </div>
+    <div class="section-body">
+      <table class="grid boq-table">
+        <thead><tr><th style="width:26px">#</th><th style="width:120px">Brand</th><th style="width:140px">Series / Type</th><th>Description</th><th style="width:64px" class="t-right">Qty</th><th style="width:70px">Unit</th><th style="width:120px" class="t-right">Price</th><th style="width:120px" class="t-right">Total</th><th style="width:96px"></th></tr></thead>
+        <tbody>
+        ${s.items.map((it,ii)=>`
+          <tr>
+            <td class="num" style="color:var(--muted);font-size:12px">${ii+1}</td>
+            <td><input class="inline-input" value="${esc(it.brand)}" onchange="itemSet('${q.id}',${si},${ii},'brand',this.value)"></td>
+            <td><input class="inline-input" value="${esc(it.series)}" onchange="itemSet('${q.id}',${si},${ii},'series',this.value)"></td>
+            <td><input class="inline-input" value="${esc(it.description)}" onchange="itemSet('${q.id}',${si},${ii},'description',this.value)"></td>
+            <td><input class="inline-input num" type="number" min="0" step="any" value="${it.qty}" onchange="itemSet('${q.id}',${si},${ii},'qty',Number(this.value)||0)"></td>
+            <td><input class="inline-input" value="${esc(it.unit)}" onchange="itemSet('${q.id}',${si},${ii},'unit',this.value)"></td>
+            <td><input class="inline-input num" type="number" min="0" value="${it.price}" onchange="itemSet('${q.id}',${si},${ii},'price',Number(this.value)||0)"></td>
+            <td class="t-right num" style="font-weight:600;padding-right:10px">${fmtRp(lineTotal(it))}</td>
+            <td class="rowtools">
+              <button onclick="moveItem('${q.id}',${si},${ii},-1)" title="Move up">↑</button>
+              <button onclick="moveItem('${q.id}',${si},${ii},1)" title="Move down">↓</button>
+              <button class="del" onclick="removeItem('${q.id}',${si},${ii})" title="Remove">✕</button>
+            </td>
+          </tr>`).join("")}
+        ${s.items.length?"":`<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:16px">Empty section — add items below.</td></tr>`}
+        </tbody>
+      </table>
+      <div class="addrow-bar">
+        <button class="btn small" onclick="openPicker('${q.id}',${si})">+ From database</button>
+        <button class="btn small" onclick="addManualItem('${q.id}',${si})">+ Manual line</button>
+      </div>
+      <div class="section-sub"><span>Section total</span><span class="num">${fmtRp(sectionTotal(s))}</span></div>
+    </div>
+  </div>`;
+}
+/* quote mutators */
+function qSet(id,k,v){ getQuote(id)[k]=v; setDirty(true); render(); }
+function qSetSilent(id,k,v){ getQuote(id)[k]=v; setDirty(true); }
+function addSection(id){ getQuote(id).sections.push({name:"New Section",items:[]}); setDirty(true); render(); }
+function renameSection(id,si,v){ getQuote(id).sections[si].name=v; setDirty(true); }
+function removeSection(id,si){ const q=getQuote(id); if(q.sections[si].items.length&&!confirm("Delete this section and its "+q.sections[si].items.length+" line(s)?"))return; q.sections.splice(si,1); setDirty(true); render(); }
+function moveSection(id,si,d){ const q=getQuote(id),j=si+d; if(j<0||j>=q.sections.length)return; [q.sections[si],q.sections[j]]=[q.sections[j],q.sections[si]]; setDirty(true); render(); }
+function itemSet(id,si,ii,k,v){ getQuote(id).sections[si].items[ii][k]=v; setDirty(true); render(); }
+function addManualItem(id,si){ getQuote(id).sections[si].items.push({brand:"",series:"",description:"",qty:1,unit:"unit",price:0}); setDirty(true); render(); }
+function removeItem(id,si,ii){ getQuote(id).sections[si].items.splice(ii,1); setDirty(true); render(); }
+function moveItem(id,si,ii,d){ const a=getQuote(id).sections[si].items,j=ii+d; if(j<0||j>=a.length)return; [a[ii],a[j]]=[a[j],a[ii]]; setDirty(true); render(); }
+
+/* templates in notes */
+function insertTemplate(qid){
+  const tid=$("#tplSelect").value; if(!tid) return;
+  const t=DB.templates.find(x=>x.id===tid), q=getQuote(qid);
+  q.notes=(q.notes?q.notes+"\n\n":"")+t.content; setDirty(true); render();
+}
+async function saveNotesAsTemplate(qid){
+  const q=getQuote(qid); if(!q.notes.trim()) return alert("Notes are empty.");
+  const name=prompt("Template name:","Terms — "+todayISO()); if(!name) return;
+  DB.templates.unshift({id:uid(),name,content:q.notes}); await persist(saveTemplates,"Template saved"); render();
+}
+
+/* ================= equipment picker ================= */
+let pickerCtx=null;
+function openPicker(qid,si){
+  pickerCtx={qid,si};
+  openModal("Add equipment from database",`
+    <input id="pkSearch" placeholder="Search brand, series, description…" autofocus
+      style="width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 12px;outline:none;margin-bottom:12px" oninput="renderPicker()">
+    <div style="max-height:52vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px">
+      <table class="grid"><tbody id="pkRows"></tbody></table>
+    </div>`,
+    `<button class="btn" onclick="closeModal()">Done</button>`,true);
+  renderPicker();
+}
+function renderPicker(){
+  const q=($("#pkSearch")?.value||"").toLowerCase();
+  const list=DB.equipment.filter(e=>!q||(e.brand+" "+e.series+" "+e.description+" "+e.category).toLowerCase().includes(q)).slice(0,80);
+  $("#pkRows").innerHTML=list.length?list.map(e=>`
+    <tr><td style="font-weight:600;white-space:nowrap">${esc(e.brand)}</td><td style="white-space:nowrap">${esc(e.series)}</td>
+    <td style="color:var(--muted);font-size:12.5px">${esc(e.description)}</td>
+    <td class="t-right num" style="white-space:nowrap">${fmtRp(e.price)}</td>
+    <td class="t-right"><button class="btn small primary" onclick="pickItem('${e.id}')">Add</button></td></tr>`).join("")
+  :`<tr><td style="padding:20px;text-align:center;color:var(--muted)">No matches in the equipment database.</td></tr>`;
+}
+function pickItem(eid){
+  const e=DB.equipment.find(x=>x.id===eid), {qid,si}=pickerCtx;
+  getQuote(qid).sections[si].items.push({brand:e.brand,series:e.series,description:e.description,qty:1,unit:e.unit||"unit",price:e.price});
+  setDirty(true); toast(e.brand+" "+e.series+" added");
+  render(); // re-render page behind modal
+}
+
+/* ================= modal helpers ================= */
+function openModal(title,body,foot,wide){
+  $("#modalTitle").textContent=title; $("#modalBody").innerHTML=body; $("#modalFoot").innerHTML=foot||"";
+  $("#modalBox").classList.toggle("wide",!!wide);
+  $("#modalBack").classList.add("open");
+}
+function closeModal(){ $("#modalBack").classList.remove("open"); }
+$("#modalBack")?.addEventListener?.("click",e=>{ if(e.target.id==="modalBack") closeModal(); });
+
+/* ================= PDF export (print) ================= */
+function docHeaderHTML(title,p,metaRows){
+  const C=CONFIG.COMPANY;
+  return `<div class="p-head">
+      <div class="p-co">${esc(C.name)}<small>${esc(C.tagline)}\n${esc(C.address)}\n${esc(C.contact)}</small></div>
+      <div class="p-doc-title"><h2>${title}</h2></div>
+    </div>
+    <table class="p-meta"><tbody>
+      ${metaRows.map(([k,v])=>`<tr><td class="k">${k}</td><td>: ${esc(v)}</td></tr>`).join("")}
+    </tbody></table>`;
+}
+function printQuote(qid){
+  const q=getQuote(qid), p=getProject(q.projectId);
+  if(dirty) persist(saveQuotes); // save silently before export
+  let rows="", no=0;
+  q.sections.forEach(s=>{
+    rows+=`<tr class="sec"><td colspan="8">${esc(s.name).toUpperCase()}</td></tr>`;
+    s.items.forEach(it=>{ no++;
+      rows+=`<tr><td class="num-p">${no}</td><td>${esc(it.brand)}</td><td>${esc(it.series)}</td><td>${esc(it.description)}</td>
+        <td class="num-p" style="text-align:right">${fmtN(it.qty)}</td><td>${esc(it.unit)}</td>
+        <td class="num-p" style="text-align:right">${fmtRp(it.price)}</td><td class="num-p" style="text-align:right">${fmtRp(lineTotal(it))}</td></tr>`;
+    });
+    rows+=`<tr class="subtotal"><td colspan="7" style="text-align:right">Subtotal — ${esc(s.name)}</td><td class="num-p" style="text-align:right">${fmtRp(sectionTotal(s))}</td></tr>`;
+  });
+  $("#printArea").innerHTML=`<div class="p-doc">
+    ${docHeaderHTML("QUOTATION",p,[
+      ["Project",p.name],["Location",p.location||"—"],
+      ["Quotation no.",q.quoteNumber||"—"],["Quotation title",q.title||"—"],
+      ["Quotation date",fmtDate(q.date)],["Exported",new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})]
+    ])}
+    <table class="p-table">
+      <thead><tr><th style="width:24px">No</th><th style="width:80px">Brand</th><th style="width:105px">Series / Type</th><th>Description</th><th style="width:44px;text-align:right">Qty</th><th style="width:44px">Unit</th><th style="width:92px;text-align:right">Unit Price</th><th style="width:96px;text-align:right">Total Price</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <table class="p-tot"><tbody>
+      <tr><td>Subtotal</td><td class="num-p" style="text-align:right">${fmtRp(quoteSubtotal(q))}</td></tr>
+      <tr><td>PPN 11%${q.tax?"":" (excluded)"}</td><td class="num-p" style="text-align:right">${q.tax?fmtRp(quoteTax(q)):"—"}</td></tr>
+      <tr class="g"><td>GRAND TOTAL</td><td class="num-p" style="text-align:right">${fmtRp(quoteGrand(q))}</td></tr>
+    </tbody></table>
+    ${q.notes.trim()?`<div class="p-notes"><h4>Notes & Terms</h4><div>${esc(q.notes)}</div></div>`:""}
+    <div class="p-sign">
+      <div class="box">Prepared by,<div class="line"></div>${esc(CONFIG.COMPANY.name)}</div>
+      <div class="box">Approved by,<div class="line"></div>${esc(p.client||"Client")}</div>
+    </div>
+  </div>`;
+  window.print();
+}
+function printSummary(pid){
+  const p=getProject(pid), quotes=projectQuotes(pid);
+  let rows=quotes.map((q,i)=>`<tr>
+      <td class="num-p">${i+1}</td><td class="num-p">${esc(q.quoteNumber||"—")}</td><td>${esc(q.title||"—")}</td>
+      <td class="num-p">${fmtDate(q.date)}</td>
+      <td class="num-p" style="text-align:right">${fmtRp(quoteSubtotal(q))}</td>
+      <td class="num-p" style="text-align:right">${q.tax?fmtRp(quoteTax(q)):"—"}</td>
+      <td class="num-p" style="text-align:right">${fmtRp(quoteGrand(q))}</td></tr>`).join("");
+  const g=quotes.reduce((a,q)=>a+quoteGrand(q),0);
+  $("#printArea").innerHTML=`<div class="p-doc">
+    ${docHeaderHTML("QUOTATION SUMMARY",p,[
+      ["Project",p.name],["Location",p.location||"—"],["Client",p.client||"—"],
+      ["Quotations",String(quotes.length)],
+      ["Exported",new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})]
+    ])}
+    <table class="p-table">
+      <thead><tr><th style="width:24px">No</th><th style="width:130px">Quotation No.</th><th>Title / Scope</th><th style="width:90px">Date</th><th style="width:100px;text-align:right">Subtotal</th><th style="width:90px;text-align:right">PPN 11%</th><th style="width:110px;text-align:right">Grand Total</th></tr></thead>
+      <tbody>${rows}
+        <tr class="subtotal"><td colspan="6" style="text-align:right">TOTAL — ALL QUOTATIONS</td><td class="num-p" style="text-align:right">${fmtRp(g)}</td></tr>
+      </tbody>
+    </table>
+    <div class="p-sign">
+      <div class="box">Prepared by,<div class="line"></div>${esc(CONFIG.COMPANY.name)}</div>
+      <div class="box">Approved by,<div class="line"></div>${esc(p.client||"Client")}</div>
+    </div>
+  </div>`;
+  window.print();
+}
+
+/* ================= boot ================= */
+window.addEventListener("beforeunload",e=>{ if(dirty){e.preventDefault();e.returnValue="";} });
+document.addEventListener("DOMContentLoaded",()=>{
+  initAuth();
+  $("#signInBtn").addEventListener("click",signIn);
+  $("#signOutBtn").addEventListener("click",signOut);
+});
+</script>
+</body>
+</html>
