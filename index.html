@@ -136,7 +136,7 @@ table.grid tr.rowlink:hover td{background:#F5F8F5}
 #printArea{display:none}
 @media print{
   body{background:#fff}
-  #app,.topbar,#toast{display:none!important}
+  #app,.topbar,#toast,#modalBack,.login-screen{display:none!important}
   #printArea{display:block;font-family:var(--sans);color:#111;font-size:11.5px}
   .p-doc{padding:0}
   .p-head{display:flex;justify-content:space-between;border-bottom:3px solid #111;padding-bottom:12px;margin-bottom:6px}
@@ -686,8 +686,8 @@ function openSummaryExport(pid){
       </select></div>
     <p style="font-size:12px;color:var(--muted)">Tip: choose “Quotations only” when the document goes to the client — RAP figures and margin stay internal.</p>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
-     <button class="btn" onclick="exportSummaryXlsx('${pid}',$('#sum_scope').value);closeModal()">⤓ Excel</button>
-     <button class="btn primary" onclick="printSummary('${pid}',$('#sum_scope').value);closeModal()">⤓ PDF</button>`);
+     <button class="btn" onclick="const sc=$('#sum_scope').value;closeModal();exportSummaryXlsx('${pid}',sc)">⤓ Excel</button>
+     <button class="btn primary" onclick="const sc=$('#sum_scope').value;closeModal();setTimeout(()=>printSummary('${pid}',sc),60)">⤓ PDF</button>`);
 }
 async function newQuote(pid,kind){
   kind=kind||"quote";
