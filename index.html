@@ -166,8 +166,11 @@ table.grid tr.rowlink:hover td{background:#F5F8F5}
   .p-sign .sco{color:#111;font-size:10.5px;font-weight:600;margin-top:1px}
   .num-p{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
   tr{page-break-inside:avoid}
-  @page{margin:0}
-  .p-doc{padding:16mm 14mm}
+  /* top/bottom margins repeat on every page but stay too small for the
+     browser to fit its date/URL header & footer text; left/right comes
+     from document padding */
+  @page{margin:9mm 0}
+  .p-doc{padding:4mm 14mm 6mm}
 }
 </style>
 </head>
@@ -252,12 +255,13 @@ const SHEETS = {
   NoteTemplates:["ID","Name","Content"],
   SignaturePresets:["ID","Name","JSON"],
   Distributors: ["ID","Name","Contact Person","Phone","Email","Address","Notes"],
-  Companies:    ["ID","Name","Tagline","Address","Contact","Bank Details"]
+  Companies:    ["ID","Name","Tagline","Address","Contact","Bank Details"],
+  Users:        ["ID","Email","Roles","Companies","Locked"]
 };
 
 /* ================= state ================= */
 let token=null, tokenExp=0, userEmail="", userPic="";
-let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[],distributors:[],companies:[]};
+let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[],distributors:[],companies:[],users:[]};
 let route={view:"home",tab:"projects",ptab:"docs",projectId:null,quoteId:null,companyFilter:""};
 let dirty=false;
 
@@ -320,8 +324,14 @@ async function signIn(){
       DB.companies.push({id:uid(),name:CONFIG.COMPANY.name,tagline:CONFIG.COMPANY.tagline,address:CONFIG.COMPANY.address,contact:CONFIG.COMPANY.contact,bank:""});
       await saveCompanies();
     }
+    if(!DB.users.length){
+      DB.users.push({id:uid(),email:userEmail,roles:["admin"],companies:[],locked:true});
+      await saveUsers();
+    }
+    CURRENT_USER=DB.users.find(u=>u.email.trim().toLowerCase()===userEmail.toLowerCase());
+    if(!CURRENT_USER) throw new Error(userEmail+" is not registered in this app. Ask the administrator to add you in the Users tab.");
     $("#loginScreen").style.display="none"; $("#app").style.display="block";
-    $("#userChip").innerHTML=(userPic?`<img src="${esc(userPic)}" alt="">`:"")+`<span>${esc(userEmail)}</span>`;
+    $("#userChip").innerHTML=(userPic?`<img src="${esc(userPic)}" alt="">`:"")+`<span>${esc(userEmail)}</span><span class="pill" style="background:rgba(255,255,255,.12);color:#CFE2D6">${(CURRENT_USER.roles||[]).map(r=>ROLE_LABEL[r]||r).join(" · ")||"no role"}</span>`;
     render();
   }catch(e){
     token=null;
@@ -373,7 +383,7 @@ async function ensureTabs(){
 async function loadAll(){
   const ranges=Object.keys(SHEETS).map(t=>`ranges=${encodeURIComponent(t+"!A2:Z")}`).join("&");
   const res=await api("/values:batchGet?"+ranges);
-  const [eq,pr,qu,nt,sp,di,co]=res.valueRanges.map(v=>v.values||[]);
+  const [eq,pr,qu,nt,sp,di,co,us]=res.valueRanges.map(v=>v.values||[]);
   DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||"",distributor:r[9]||""}));
   DB.projects=pr.filter(r=>r[0]).map(r=>{
     let sig={}; try{sig=JSON.parse(r[6]||"{}")}catch(e){}
@@ -391,6 +401,7 @@ async function loadAll(){
   DB.sigPresets=(sp||[]).filter(r=>r[0]).map(r=>{let j={};try{j=JSON.parse(r[2]||"{}")}catch(e){} return {id:r[0],name:r[1]||"",...j};});
   DB.distributors=(di||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",contact:r[2]||"",phone:r[3]||"",email:r[4]||"",address:r[5]||"",notes:r[6]||""}));
   DB.companies=(co||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",tagline:r[2]||"",address:r[3]||"",contact:r[4]||"",bank:r[5]||""}));
+  DB.users=(us||[]).filter(r=>r[0]).map(r=>({id:r[0],email:r[1]||"",roles:(r[2]||"").split(",").filter(Boolean),companies:(r[3]||"").split(",").filter(Boolean),locked:r[4]==="TRUE"}));
 }
 async function saveTab(tab,rows){
   await api(`/values/${encodeURIComponent(tab)}!A2:Z:clear`,{method:"POST",body:"{}"});
@@ -405,6 +416,7 @@ const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projec
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
 const saveDistributors=()=>saveTab("Distributors",DB.distributors.map(d=>[d.id,d.name,d.contact,d.phone,d.email,d.address,d.notes]));
 const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.tagline,c.address,c.contact,c.bank]));
+const saveUsers=()=>saveTab("Users",DB.users.map(u=>[u.id,u.email,u.roles.join(","),u.companies.join(","),u.locked?"TRUE":"FALSE"]));
 async function persist(fn,msg){
   try{ $("#saveState").textContent="saving…"; await fn(); setDirty(false); toast(msg||"Saved to Google Sheet"); }
   catch(e){ $("#saveState").textContent=""; alert("Save failed: "+e.message); }
@@ -421,6 +433,20 @@ const quoteGrand=q=>quoteSubtotal(q)-quoteDiscount(q)+quoteTax(q);
 const discLabel=q=>q.discount?.type==="percent"?`Discount (${fmtN(q.discount.value)}%)`:"Discount";
 const kindQuotes=(pid,k)=>DB.quotations.filter(q=>q.projectId===pid&&(q.kind||"quote")===k);
 const projCompany=p=>DB.companies.find(c=>c.id===p?.companyId)||DB.companies[0]||{name:CONFIG.COMPANY.name,tagline:CONFIG.COMPANY.tagline,address:CONFIG.COMPANY.address,contact:CONFIG.COMPANY.contact,bank:""};
+/* ---------- roles & permissions ---------- */
+let CURRENT_USER=null;
+const ROLE_LABEL={admin:"Administrator",engineer:"Engineer",adminproject:"Admin Project",finance:"Finance",purchasing:"Purchasing"};
+const PERMS={
+  equipment:["admin","purchasing"], distributors:["admin","purchasing"],
+  templates:["admin","adminproject"], companies:["admin"], users:["admin"],
+  quote:["admin","engineer","adminproject"], rap:["admin","adminproject","purchasing"],
+  billing:["admin","finance"], po:["admin","purchasing"], manage:["admin","adminproject"]
+};
+const isAdmin=()=>!!CURRENT_USER?.roles?.includes("admin");
+const can=k=>!CURRENT_USER||(PERMS[k]||[]).some(r=>CURRENT_USER.roles.includes(r));
+const allowedCompanyIds=()=>isAdmin()?DB.companies.map(c=>c.id):(CURRENT_USER?.companies||[]);
+const canSeeProject=p=>allowedCompanyIds().includes(p.companyId||DB.companies[0]?.id);
+const docPerm=k=>({quote:"quote",rap:"rap",invoice:"billing",receipt:"billing",po:"po"}[k||"quote"]);
 const getDistributor=name=>DB.distributors.find(d=>d.name.trim().toLowerCase()===String(name||"").trim().toLowerCase());
 const KIND_LABEL={quote:"Quotation",rap:"RAP",invoice:"Invoice",receipt:"Receipt",po:"Purchase Order"};
 function terbilang(n){
@@ -457,6 +483,8 @@ function render(){
 
 /* ================= HOME ================= */
 function renderHome(v){
+  const tabPerm={projects:null,equipment:"equipment",distributors:"distributors",templates:"templates",companies:"companies",users:"users"};
+  if(tabPerm[route.tab]&&!can(tabPerm[route.tab])) route.tab="projects";
   const tab=route.tab;
   v.innerHTML=`
     <div class="page-head">
@@ -464,19 +492,21 @@ function renderHome(v){
       <div class="sub">Data source: Google Sheet · signed in as ${esc(userEmail)}</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" onclick="reloadData()">↻ Reload</button>
-        ${tab==="projects"?`<button class="btn primary" onclick="openProjectModal()">+ New project</button>`
+        ${tab==="projects"?(can("manage")?`<button class="btn primary" onclick="openProjectModal()">+ New project</button>`:"")
          :tab==="equipment"?`<button class="btn primary" onclick="openEquipmentModal()">+ Add equipment</button>`
          :tab==="distributors"?`<button class="btn primary" onclick="openDistributorModal()">+ Add distributor</button>`
          :tab==="companies"?`<button class="btn primary" onclick="openCompanyModal()">+ Add company</button>`
+         :tab==="users"?`<button class="btn primary" onclick="openUserModal()">+ Add user</button>`
          :`<button class="btn primary" onclick="openTemplateModal()">+ New template</button>`}
       </div>
     </div>
     <div class="tabs">
       <button class="tab ${tab==="projects"?"active":""}" onclick="route.tab='projects';render()">Projects</button>
-      <button class="tab ${tab==="equipment"?"active":""}" onclick="route.tab='equipment';render()">Equipment</button>
-      <button class="tab ${tab==="distributors"?"active":""}" onclick="route.tab='distributors';render()">Distributors</button>
-      <button class="tab ${tab==="templates"?"active":""}" onclick="route.tab='templates';render()">Note templates</button>
-      <button class="tab ${tab==="companies"?"active":""}" onclick="route.tab='companies';render()">Companies</button>
+      ${can("equipment")?`<button class="tab ${tab==="equipment"?"active":""}" onclick="route.tab='equipment';render()">Equipment</button>`:""}
+      ${can("distributors")?`<button class="tab ${tab==="distributors"?"active":""}" onclick="route.tab='distributors';render()">Distributors</button>`:""}
+      ${can("templates")?`<button class="tab ${tab==="templates"?"active":""}" onclick="route.tab='templates';render()">Note templates</button>`:""}
+      ${can("companies")?`<button class="tab ${tab==="companies"?"active":""}" onclick="route.tab='companies';render()">Companies</button>`:""}
+      ${can("users")?`<button class="tab ${tab==="users"?"active":""}" onclick="route.tab='users';render()">Users</button>`:""}
     </div>
     <div id="tabBody"></div>`;
   const b=$("#tabBody");
@@ -484,6 +514,7 @@ function renderHome(v){
   else if(tab==="equipment") renderEquipmentTab(b);
   else if(tab==="distributors") renderDistributorsTab(b);
   else if(tab==="companies") renderCompaniesTab(b);
+  else if(tab==="users") renderUsersTab(b);
   else renderTemplatesTab(b);
 }
 async function reloadData(){ try{ await loadAll(); render(); toast("Data reloaded from Sheet"); }catch(e){ alert(e.message); } }
@@ -493,9 +524,9 @@ function renderProjectList(b){
     <span class="eyebrow">Issuer company</span>
     <select onchange="route.companyFilter=this.value;render()" style="border:1px solid var(--line);border-radius:8px;padding:8px;min-width:220px">
       <option value="">All companies</option>
-      ${DB.companies.map(c=>`<option value="${c.id}" ${route.companyFilter===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}
+      ${DB.companies.filter(c=>allowedCompanyIds().includes(c.id)).map(c=>`<option value="${c.id}" ${route.companyFilter===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}
     </select></div>`;
-  const list=DB.projects.filter(p=>!route.companyFilter||(p.companyId||DB.companies[0]?.id)===route.companyFilter);
+  const list=DB.projects.filter(p=>canSeeProject(p)&&(!route.companyFilter||(p.companyId||DB.companies[0]?.id)===route.companyFilter));
   if(!DB.projects.length){ b.innerHTML=coSel+`<div class="card"><div class="empty"><span class="eyebrow">No projects yet</span>Create your first project to start building quotations.</div></div>`; return; }
   b.innerHTML=coSel+`<div class="card"><table class="grid">
     <thead><tr><th>Project</th><th>Company</th><th>Location</th><th>Client</th><th>Docs</th><th>Created</th><th></th></tr></thead>
@@ -507,14 +538,14 @@ function renderProjectList(b){
         <td>${esc(p.client)}</td>
         <td><span class="pill amber">${DB.quotations.filter(q=>q.projectId===p.id).length}</span></td>
         <td class="num" style="font-size:12px;color:var(--muted)">${esc(p.created)}</td>
-        <td class="t-right"><button class="btn ghost small danger" onclick="event.stopPropagation();deleteProject('${p.id}')">Delete</button></td>
+        <td class="t-right">${can("manage")?`<button class="btn ghost small danger" onclick="event.stopPropagation();deleteProject('${p.id}')">Delete</button>`:""}</td>
       </tr>`).join(""):`<tr><td colspan="7"><div class="empty">No projects for this company yet.</div></td></tr>`}
     </tbody></table></div>`;
 }
 function openProjectModal(p){
   openModal(p?"Edit project":"New project",`
     <div class="field"><label>Issuer company (shown on all PDF headers)</label>
-      <select id="m_company">${DB.companies.map(c=>`<option value="${c.id}" ${(p?.companyId||route.companyFilter||DB.companies[0]?.id)===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}</select></div>
+      <select id="m_company">${DB.companies.filter(c=>allowedCompanyIds().includes(c.id)).map(c=>`<option value="${c.id}" ${(p?.companyId||route.companyFilter||DB.companies[0]?.id)===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}</select></div>
     <div class="field"><label>Project name</label><input id="m_name" value="${esc(p?.name||"")}" placeholder="e.g. Paragon Multifunction Room"></div>
     <div class="field-row c2">
       <div class="field"><label>Location</label><input id="m_loc" value="${esc(p?.location||"")}" placeholder="e.g. Jakarta"></div>
@@ -721,6 +752,73 @@ async function deleteCompany(id){
   DB.companies=DB.companies.filter(x=>x.id!==id); render(); await persist(saveCompanies,"Company deleted");
 }
 
+/* ================= USERS TAB ================= */
+function renderUsersTab(b){
+  b.innerHTML=`<div class="card" style="overflow-x:auto"><table class="grid" style="min-width:760px">
+    <thead><tr><th>Email</th><th>Roles</th><th>Company access</th><th></th></tr></thead>
+    <tbody>${DB.users.map(u=>`
+      <tr><td style="font-weight:600">${esc(u.email)} ${u.locked?'<span class="pill">founder · locked</span>':""}</td>
+      <td>${u.roles.map(r=>`<span class="pill ${r==="admin"?"":"amber"}">${ROLE_LABEL[r]||r}</span>`).join(" ")||'<span style="color:var(--muted)">no role</span>'}</td>
+      <td style="font-size:12px;color:var(--muted)">${u.roles.includes("admin")?"All companies":(u.companies.map(id=>esc(DB.companies.find(c=>c.id===id)?.name||"?")).join(", ")||"— none —")}</td>
+      <td class="t-right" style="white-space:nowrap">
+        <button class="btn ghost small" onclick="openUserModal('${u.id}')">Edit</button>
+        ${u.locked?"":`<button class="btn ghost small danger" onclick="deleteUser('${u.id}')">Delete</button>`}</td></tr>`).join("")}
+    </tbody></table></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.7">
+      Access matrix — <strong>Administrator</strong>: everything · <strong>Engineer</strong>: quotations only ·
+      <strong>Admin Project</strong>: quotations + RAP + note templates · <strong>Finance</strong>: invoices + receipts ·
+      <strong>Purchasing</strong>: RAP + purchase orders + equipment + distributors.<br>
+      ⚠ Remember: each user also needs Editor access to the Google Sheet itself (Share button on the Sheet), and to be added
+      as a Test user on the OAuth consent screen. App roles control the interface; the Sheet sharing is the real gate.</div>`;
+}
+function openUserModal(id){
+  const u=DB.users.find(x=>x.id===id);
+  const roleBoxes=Object.keys(ROLE_LABEL).map(r=>`
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer">
+      <input type="checkbox" class="u_role" value="${r}" ${u?.roles.includes(r)?"checked":""} ${(u?.locked&&r==="admin")?"disabled checked":""}
+        onchange="toggleUserCompanyBoxes()">${ROLE_LABEL[r]}</label>`).join("");
+  const coBoxes=DB.companies.map(c=>`
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer">
+      <input type="checkbox" class="u_co" value="${c.id}" ${u?.companies.includes(c.id)?"checked":""}>${esc(c.name)}</label>`).join("");
+  openModal(u?"Edit user":"Add user",`
+    <div class="field"><label>Google account email</label><input id="u_email" value="${esc(u?.email||"")}" placeholder="name@gmail.com" ${u?.locked?"readonly":""}></div>
+    <div class="field"><label>Roles (tick all that apply)</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${roleBoxes}</div>
+      ${u?.locked?'<span style="font-size:11.5px;color:var(--muted)">The founder account is permanently Administrator.</span>':""}</div>
+    <div class="field" id="u_co_wrap"><label>Can access projects of these companies</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${coBoxes}</div></div>
+    <p id="u_co_note" style="font-size:12px;color:var(--muted);display:none">Administrators automatically access all companies.</p>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="saveUserModal('${id||""}')">${u?"Save changes":"Add user"}</button>`);
+  toggleUserCompanyBoxes();
+}
+function toggleUserCompanyBoxes(){
+  const admin=[...document.querySelectorAll(".u_role")].some(c=>c.value==="admin"&&c.checked);
+  $("#u_co_wrap").style.display=admin?"none":"flex";
+  $("#u_co_note").style.display=admin?"block":"none";
+}
+async function saveUserModal(id){
+  const email=$("#u_email").value.trim();
+  if(!email||!email.includes("@")) return alert("A valid email is required.");
+  const roles=[...document.querySelectorAll(".u_role:checked")].map(c=>c.value);
+  const companies=[...document.querySelectorAll(".u_co:checked")].map(c=>c.value);
+  if(!roles.length) return alert("Pick at least one role.");
+  const dup=DB.users.find(x=>x.email.toLowerCase()===email.toLowerCase()&&x.id!==id);
+  if(dup) return alert("That email is already registered.");
+  if(id){
+    const u=DB.users.find(x=>x.id===id);
+    if(u.locked&&!roles.includes("admin")) roles.push("admin");
+    u.email=u.locked?u.email:email; u.roles=roles; u.companies=roles.includes("admin")?[]:companies;
+  } else DB.users.unshift({id:uid(),email,roles,companies:roles.includes("admin")?[]:companies,locked:false});
+  closeModal(); render(); await persist(saveUsers,"User saved — remind them to get Sheet access + OAuth test-user access");
+}
+async function deleteUser(id){
+  const u=DB.users.find(x=>x.id===id);
+  if(u.locked) return alert("The founder administrator cannot be deleted.");
+  if(!confirm("Remove "+u.email+" from the app? (Also remove them from the Sheet sharing to fully revoke access.)")) return;
+  DB.users=DB.users.filter(x=>x.id!==id); render(); await persist(saveUsers,"User removed");
+}
+
 /* ================= NOTE TEMPLATES TAB ================= */
 function renderTemplatesTab(b){
   b.innerHTML=DB.templates.length?`<div class="card"><table class="grid">
@@ -757,8 +855,11 @@ async function deleteTemplate(id){
 /* ================= PROJECT VIEW ================= */
 function renderProject(v,p){
   if(!p){ go({view:"home"}); return; }
+  if(!canSeeProject(p)){ toast("You don't have access to this company's projects"); go({view:"home"}); return; }
   const co=projCompany(p);
-  const ptab=route.ptab||"docs";
+  const tabsAllowed={docs:can("quote")||can("rap"),billing:can("billing"),po:can("po")};
+  if(!tabsAllowed[route.ptab]) route.ptab=tabsAllowed.docs?"docs":tabsAllowed.billing?"billing":"po";
+  const ptab=route.ptab;
   v.innerHTML=`
     <div class="page-head">
       <div>
@@ -767,14 +868,14 @@ function renderProject(v,p){
         <div class="sub">${esc(p.location||"No location")} ${p.client?"· "+esc(p.client):""}</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" onclick="openProjectModal(getProject('${p.id}'))">Edit details</button>
-        <button class="btn" onclick="openSummaryExport('${p.id}')" ${DB.quotations.some(q=>q.projectId===p.id&&["quote","rap"].includes(q.kind||"quote"))?"":"disabled"}>⤓ Export summary</button>
+        ${can("manage")?`<button class="btn" onclick="openProjectModal(getProject('${p.id}'))">Edit details</button>`:""}
+        ${(can("quote")||can("rap"))?`<button class="btn" onclick="openSummaryExport('${p.id}')" ${DB.quotations.some(q=>q.projectId===p.id&&["quote","rap"].includes(q.kind||"quote"))?"":"disabled"}>⤓ Export summary</button>`:""}
       </div>
     </div>
     <div class="tabs">
-      <button class="tab ${ptab==="docs"?"active":""}" onclick="route.ptab='docs';render()">Quotations & RAP</button>
-      <button class="tab ${ptab==="billing"?"active":""}" onclick="route.ptab='billing';render()">Invoices & Receipts</button>
-      <button class="tab ${ptab==="po"?"active":""}" onclick="route.ptab='po';render()">Purchase Orders</button>
+      ${tabsAllowed.docs?`<button class="tab ${ptab==="docs"?"active":""}" onclick="route.ptab='docs';render()">${can("quote")&&can("rap")?"Quotations & RAP":can("quote")?"Quotations":"RAP"}</button>`:""}
+      ${tabsAllowed.billing?`<button class="tab ${ptab==="billing"?"active":""}" onclick="route.ptab='billing';render()">Invoices & Receipts</button>`:""}
+      ${tabsAllowed.po?`<button class="tab ${ptab==="po"?"active":""}" onclick="route.ptab='po';render()">Purchase Orders</button>`:""}
     </div>
     <div id="ptabBody"></div>`;
   const b=$("#ptabBody");
@@ -783,9 +884,9 @@ function renderProject(v,p){
   else renderProjectPO(b,p);
 }
 function docRowActions(q,kind){
-  return `${kind==="quote"?`<button class="btn ghost small" title="Create RAP from this quotation" onclick="event.stopPropagation();deriveRAP('${q.id}')">→ RAP</button>`:""}
-    ${kind==="rap"?`<button class="btn ghost small" title="Create a purchase order from selected items" onclick="event.stopPropagation();openPOFromRAP('${q.id}')">→ PO</button>`:""}
-    ${kind==="invoice"?`<button class="btn ghost small" title="Create receipt for this invoice" onclick="event.stopPropagation();receiptFromInvoice('${q.id}')">→ Receipt</button>`:""}
+  return `${kind==="quote"&&can("rap")?`<button class="btn ghost small" title="Create RAP from this quotation" onclick="event.stopPropagation();deriveRAP('${q.id}')">→ RAP</button>`:""}
+    ${kind==="rap"&&can("po")?`<button class="btn ghost small" title="Create a purchase order from selected items" onclick="event.stopPropagation();openPOFromRAP('${q.id}')">→ PO</button>`:""}
+    ${kind==="invoice"&&can("billing")?`<button class="btn ghost small" title="Create receipt for this invoice" onclick="event.stopPropagation();receiptFromInvoice('${q.id}')">→ Receipt</button>`:""}
     <button class="btn ghost small" onclick="event.stopPropagation();duplicateQuote('${q.id}')">Duplicate</button>
     <button class="btn ghost small danger" onclick="event.stopPropagation();deleteQuote('${q.id}')">Delete</button>`;
 }
@@ -814,17 +915,20 @@ function renderProjectDocs(b,p){
   const quotes=kindQuotes(p.id,"quote"), raps=kindQuotes(p.id,"rap");
   const gq=quotes.reduce((a,q)=>a+quoteGrand(q),0), gr=raps.reduce((a,q)=>a+quoteGrand(q),0);
   b.innerHTML=`
+    ${can("quote")?`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <span class="eyebrow">Quotations (selling)</span>
       <button class="btn primary small" onclick="newQuote('${p.id}','quote')">+ New quotation</button>
     </div>
-    ${docTable(quotes,"quote","Create the first quotation for this project.")}
+    ${docTable(quotes,"quote","Create the first quotation for this project.")}`:""}
+    ${can("rap")?`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <span class="eyebrow" style="color:var(--amber)">RAP / Project budget estimation (internal)</span>
       <button class="btn dark small" onclick="newQuote('${p.id}','rap')">+ New RAP</button>
     </div>
-    ${docTable(raps,"rap","Create one from scratch, or use “→ RAP” on a quotation to derive it with budget prices.")}
+    ${docTable(raps,"rap","Create one from scratch, or use “→ RAP” on a quotation to derive it with budget prices.")}`:""}
 
+    ${can("manage")?`
     <div class="card card-pad" style="margin-bottom:22px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px">
         <span class="eyebrow">Signature block (printed on all PDF exports of this project)</span>
@@ -863,16 +967,16 @@ function renderProjectDocs(b,p){
       <textarea id="pNotesBox" rows="4" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;outline:none"
         placeholder="Notes shown at the bottom of the project summary — validity, scope remarks, payment schedule across quotations…"
         oninput="getProject('${p.id}').summaryNotes=this.value;setDirty(true)">${esc(p.summaryNotes||"")}</textarea>
-    </div>
+    </div>`:""}
 
     ${(quotes.length||raps.length)?`
     <span class="eyebrow">Project summary</span>
     <div class="card card-pad" style="margin-top:8px;max-width:560px">
       <div class="totals" style="max-width:none">
-        ${quotes.map(q=>`<div class="line"><span>${esc(q.quoteNumber||q.title||"Quotation")}</span><span class="num">${fmtRp(quoteGrand(q))}</span></div>`).join("")}
-        ${quotes.length?`<div class="line" style="font-weight:600;border-top:1px solid var(--line)"><span>Total quotations</span><span class="num">${fmtRp(gq)}</span></div>`:""}
-        ${raps.length?`<div class="line" style="color:var(--amber)"><span>Total RAP (budget)</span><span class="num">${fmtRp(gr)}</span></div>`:""}
-        ${(quotes.length&&raps.length)?`<div class="line grand"><span>Est. margin (quote − RAP)</span><span class="num" style="color:${gq-gr>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(gq-gr)}</span></div>`:""}
+        ${can("quote")?quotes.map(q=>`<div class="line"><span>${esc(q.quoteNumber||q.title||"Quotation")}</span><span class="num">${fmtRp(quoteGrand(q))}</span></div>`).join(""):""}
+        ${can("quote")&&quotes.length?`<div class="line" style="font-weight:600;border-top:1px solid var(--line)"><span>Total quotations</span><span class="num">${fmtRp(gq)}</span></div>`:""}
+        ${can("rap")&&raps.length?`<div class="line" style="color:var(--amber)"><span>Total RAP (budget)</span><span class="num">${fmtRp(gr)}</span></div>`:""}
+        ${(can("quote")&&can("rap")&&quotes.length&&raps.length)?`<div class="line grand"><span>Est. margin (quote − RAP)</span><span class="num" style="color:${gq-gr>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(gq-gr)}</span></div>`:""}
       </div>
     </div>`:""}`;
 }
@@ -999,9 +1103,9 @@ function openSummaryExport(pid){
   openModal("Export project summary",`
     <div class="field"><label>What to include</label>
       <select id="sum_scope">
-        <option value="all" selected>Everything — quotations + RAP + estimated margin</option>
-        <option value="quote" ${nq?"":"disabled"}>Quotations only (${nq}) — safe to share with client</option>
-        <option value="rap" ${nr?"":"disabled"}>RAP only (${nr}) — internal budget</option>
+        ${can("quote")&&can("rap")?`<option value="all" selected>Everything — quotations + RAP + estimated margin</option>`:""}
+        <option value="quote" ${(nq&&can("quote"))?"":"disabled"} ${!(can("quote")&&can("rap"))&&can("quote")?"selected":""}>Quotations only (${nq}) — safe to share with client</option>
+        <option value="rap" ${(nr&&can("rap"))?"":"disabled"} ${!can("quote")&&can("rap")?"selected":""}>RAP only (${nr}) — internal budget</option>
       </select></div>
     <p style="font-size:12px;color:var(--muted)">Tip: choose “Quotations only” when the document goes to the client — RAP figures and margin stay internal.</p>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
@@ -1071,6 +1175,7 @@ async function deleteQuote(id){
 /* ================= QUOTATION EDITOR ================= */
 function renderQuote(v,q,p){
   if(!q||!p){ go({view:"home"}); return; }
+  if(!canSeeProject(p)||!can(docPerm(q.kind))){ toast("You don't have access to this document type"); go({view:"home"}); return; }
   if(q.kind==="receipt"){ renderReceipt(v,q,p); return; }
   v.innerHTML=`
     <div class="page-head">
