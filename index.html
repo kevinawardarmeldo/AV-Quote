@@ -245,17 +245,19 @@ const CONFIG = {
 { const m=CONFIG.SPREADSHEET_ID.match(/\/d\/([A-Za-z0-9_-]{20,})/); if(m) CONFIG.SPREADSHEET_ID=m[1]; }
 
 const SHEETS = {
-  Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price","Price Updated"],
-  Projects:     ["ID","Name","Location","Client","Created","Summary Notes","Signature"],
+  Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price","Price Updated","Distributor"],
+  Projects:     ["ID","Name","Location","Client","Created","Summary Notes","Signature","Company ID"],
   Quotations:   ["ID","ProjectID","QuoteNumber","Title","Date","Tax","DataJSON","Updated"],
   NoteTemplates:["ID","Name","Content"],
-  SignaturePresets:["ID","Name","JSON"]
+  SignaturePresets:["ID","Name","JSON"],
+  Distributors: ["ID","Name","Contact Person","Phone","Email","Address","Notes"],
+  Companies:    ["ID","Name","Tagline","Address","Contact","Bank Details"]
 };
 
 /* ================= state ================= */
 let token=null, tokenExp=0, userEmail="", userPic="";
-let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[]};
-let route={view:"home",tab:"projects",projectId:null,quoteId:null};
+let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[],distributors:[],companies:[]};
+let route={view:"home",tab:"projects",ptab:"docs",projectId:null,quoteId:null,companyFilter:""};
 let dirty=false;
 
 const $=s=>document.querySelector(s);
@@ -313,6 +315,10 @@ async function signIn(){
       throw new Error(userEmail+" is not on the authorized list for this tool.");
     await ensureTabs();
     await loadAll();
+    if(!DB.companies.length){
+      DB.companies.push({id:uid(),name:CONFIG.COMPANY.name,tagline:CONFIG.COMPANY.tagline,address:CONFIG.COMPANY.address,contact:CONFIG.COMPANY.contact,bank:""});
+      await saveCompanies();
+    }
     $("#loginScreen").style.display="none"; $("#app").style.display="block";
     $("#userChip").innerHTML=(userPic?`<img src="${esc(userPic)}" alt="">`:"")+`<span>${esc(userEmail)}</span>`;
     render();
@@ -364,35 +370,40 @@ async function ensureTabs(){
   }
 }
 async function loadAll(){
-  const ranges=Object.keys(SHEETS).map(t=>`ranges=${encodeURIComponent(t+"!A2:I")}`).join("&");
+  const ranges=Object.keys(SHEETS).map(t=>`ranges=${encodeURIComponent(t+"!A2:Z")}`).join("&");
   const res=await api("/values:batchGet?"+ranges);
-  const [eq,pr,qu,nt,sp]=res.valueRanges.map(v=>v.values||[]);
-  DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||""}));
+  const [eq,pr,qu,nt,sp,di,co]=res.valueRanges.map(v=>v.values||[]);
+  DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||"",distributor:r[9]||""}));
   DB.projects=pr.filter(r=>r[0]).map(r=>{
     let sig={}; try{sig=JSON.parse(r[6]||"{}")}catch(e){}
     return {id:r[0],name:r[1]||"",location:r[2]||"",client:r[3]||"",created:r[4]||"",summaryNotes:r[5]||"",
-      sig:{prepName:sig.prepName||"",prepTitle:sig.prepTitle||"",apprName:sig.apprName||"",apprCompany:sig.apprCompany||""}};
+      sig:{prepName:sig.prepName||"",prepTitle:sig.prepTitle||"",apprName:sig.apprName||"",apprCompany:sig.apprCompany||""},
+      companyId:r[7]||""};
   });
   DB.quotations=qu.filter(r=>r[0]).map(r=>{
     let d={}; try{d=JSON.parse(r[6]||"{}")}catch(e){}
     return {id:r[0],projectId:r[1],quoteNumber:r[2]||"",title:r[3]||"",date:r[4]||"",tax:r[5]==="TRUE"||r[5]===true||r[5]==="1",
             sections:d.sections||[],notes:d.notes||"",kind:d.kind||"quote",
-            discount:d.discount||{type:"percent",value:0},updated:r[7]||""};
+            discount:d.discount||{type:"percent",value:0},extra:d.extra||{},updated:r[7]||""};
   });
   DB.templates=nt.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",content:r[2]||""}));
   DB.sigPresets=(sp||[]).filter(r=>r[0]).map(r=>{let j={};try{j=JSON.parse(r[2]||"{}")}catch(e){} return {id:r[0],name:r[1]||"",...j};});
+  DB.distributors=(di||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",contact:r[2]||"",phone:r[3]||"",email:r[4]||"",address:r[5]||"",notes:r[6]||""}));
+  DB.companies=(co||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",tagline:r[2]||"",address:r[3]||"",contact:r[4]||"",bank:r[5]||""}));
 }
 async function saveTab(tab,rows){
-  await api(`/values/${encodeURIComponent(tab)}!A2:I:clear`,{method:"POST",body:"{}"});
+  await api(`/values/${encodeURIComponent(tab)}!A2:Z:clear`,{method:"POST",body:"{}"});
   if(rows.length){
     await api(`/values/${encodeURIComponent(tab)}!A2?valueInputOption=RAW`,{method:"PUT",body:JSON.stringify({values:rows})});
   }
 }
-const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||""]));
-const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||"",JSON.stringify(p.sig||{})]));
+const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||"",e.distributor||""]));
+const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||"",JSON.stringify(p.sig||{}),p.companyId||""]));
 const saveSigPresets=()=>saveTab("SignaturePresets",DB.sigPresets.map(t=>[t.id,t.name,JSON.stringify({prepName:t.prepName||"",prepTitle:t.prepTitle||"",apprName:t.apprName||"",apprCompany:t.apprCompany||""})]));
-const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0}}),new Date().toISOString()]));
+const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0},extra:q.extra||{}}),new Date().toISOString()]));
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
+const saveDistributors=()=>saveTab("Distributors",DB.distributors.map(d=>[d.id,d.name,d.contact,d.phone,d.email,d.address,d.notes]));
+const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.tagline,c.address,c.contact,c.bank]));
 async function persist(fn,msg){
   try{ $("#saveState").textContent="saving…"; await fn(); setDirty(false); toast(msg||"Saved to Google Sheet"); }
   catch(e){ $("#saveState").textContent=""; alert("Save failed: "+e.message); }
@@ -408,6 +419,21 @@ const quoteTax=q=>q.tax?Math.round((quoteSubtotal(q)-quoteDiscount(q))*0.11):0;
 const quoteGrand=q=>quoteSubtotal(q)-quoteDiscount(q)+quoteTax(q);
 const discLabel=q=>q.discount?.type==="percent"?`Discount (${fmtN(q.discount.value)}%)`:"Discount";
 const kindQuotes=(pid,k)=>DB.quotations.filter(q=>q.projectId===pid&&(q.kind||"quote")===k);
+const projCompany=p=>DB.companies.find(c=>c.id===p?.companyId)||DB.companies[0]||{name:CONFIG.COMPANY.name,tagline:CONFIG.COMPANY.tagline,address:CONFIG.COMPANY.address,contact:CONFIG.COMPANY.contact,bank:""};
+const getDistributor=name=>DB.distributors.find(d=>d.name.trim().toLowerCase()===String(name||"").trim().toLowerCase());
+const KIND_LABEL={quote:"Quotation",rap:"RAP",invoice:"Invoice",receipt:"Receipt",po:"Purchase Order"};
+function terbilang(n){
+  n=Math.floor(Math.abs(Number(n)||0));
+  const a=["","satu","dua","tiga","empat","lima","enam","tujuh","delapan","sembilan","sepuluh","sebelas"];
+  function f(x){
+    if(x<12)return a[x]; if(x<20)return f(x-10)+" belas"; if(x<100)return f(Math.floor(x/10))+" puluh "+f(x%10);
+    if(x<200)return "seratus "+f(x-100); if(x<1000)return f(Math.floor(x/100))+" ratus "+f(x%100);
+    if(x<2000)return "seribu "+f(x-1000); if(x<1e6)return f(Math.floor(x/1000))+" ribu "+f(x%1000);
+    if(x<1e9)return f(Math.floor(x/1e6))+" juta "+f(x%1e6); if(x<1e12)return f(Math.floor(x/1e9))+" miliar "+f(x%1e9);
+    return f(Math.floor(x/1e12))+" triliun "+f(x%1e12);
+  }
+  return ((n===0?"nol":f(n)).replace(/\s+/g," ").trim()+" rupiah");
+}
 /* price staleness */
 let priceWarnDays=30;
 try{ priceWarnDays=Number(localStorage.getItem("avq_price_warn_days"))||30; }catch(e){}
@@ -435,43 +461,59 @@ function renderHome(v){
     <div class="page-head">
       <div><span class="eyebrow">Workspace</span><h1>Projects &amp; Database</h1>
       <div class="sub">Data source: Google Sheet · signed in as ${esc(userEmail)}</div></div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" onclick="reloadData()">↻ Reload</button>
         ${tab==="projects"?`<button class="btn primary" onclick="openProjectModal()">+ New project</button>`
          :tab==="equipment"?`<button class="btn primary" onclick="openEquipmentModal()">+ Add equipment</button>`
+         :tab==="distributors"?`<button class="btn primary" onclick="openDistributorModal()">+ Add distributor</button>`
+         :tab==="companies"?`<button class="btn primary" onclick="openCompanyModal()">+ Add company</button>`
          :`<button class="btn primary" onclick="openTemplateModal()">+ New template</button>`}
       </div>
     </div>
     <div class="tabs">
       <button class="tab ${tab==="projects"?"active":""}" onclick="route.tab='projects';render()">Projects</button>
       <button class="tab ${tab==="equipment"?"active":""}" onclick="route.tab='equipment';render()">Equipment</button>
+      <button class="tab ${tab==="distributors"?"active":""}" onclick="route.tab='distributors';render()">Distributors</button>
       <button class="tab ${tab==="templates"?"active":""}" onclick="route.tab='templates';render()">Note templates</button>
+      <button class="tab ${tab==="companies"?"active":""}" onclick="route.tab='companies';render()">Companies</button>
     </div>
     <div id="tabBody"></div>`;
   const b=$("#tabBody");
   if(tab==="projects") renderProjectList(b);
   else if(tab==="equipment") renderEquipmentTab(b);
+  else if(tab==="distributors") renderDistributorsTab(b);
+  else if(tab==="companies") renderCompaniesTab(b);
   else renderTemplatesTab(b);
 }
 async function reloadData(){ try{ await loadAll(); render(); toast("Data reloaded from Sheet"); }catch(e){ alert(e.message); } }
 
 function renderProjectList(b){
-  if(!DB.projects.length){ b.innerHTML=`<div class="card"><div class="empty"><span class="eyebrow">No projects yet</span>Create your first project to start building quotations.</div></div>`; return; }
-  b.innerHTML=`<div class="card"><table class="grid">
-    <thead><tr><th>Project</th><th>Location</th><th>Client</th><th>Quotations</th><th>Created</th><th></th></tr></thead>
-    <tbody>${DB.projects.map(p=>`
+  const coSel=`<div style="display:flex;gap:10px;margin-bottom:14px;align-items:center">
+    <span class="eyebrow">Issuer company</span>
+    <select onchange="route.companyFilter=this.value;render()" style="border:1px solid var(--line);border-radius:8px;padding:8px;min-width:220px">
+      <option value="">All companies</option>
+      ${DB.companies.map(c=>`<option value="${c.id}" ${route.companyFilter===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}
+    </select></div>`;
+  const list=DB.projects.filter(p=>!route.companyFilter||(p.companyId||DB.companies[0]?.id)===route.companyFilter);
+  if(!DB.projects.length){ b.innerHTML=coSel+`<div class="card"><div class="empty"><span class="eyebrow">No projects yet</span>Create your first project to start building quotations.</div></div>`; return; }
+  b.innerHTML=coSel+`<div class="card"><table class="grid">
+    <thead><tr><th>Project</th><th>Company</th><th>Location</th><th>Client</th><th>Docs</th><th>Created</th><th></th></tr></thead>
+    <tbody>${list.length?list.map(p=>`
       <tr class="rowlink" onclick="go({view:'project',projectId:'${p.id}'})">
         <td style="font-weight:600">${esc(p.name)}</td>
+        <td><span class="pill">${esc(projCompany(p).name)}</span></td>
         <td>${esc(p.location)}</td>
         <td>${esc(p.client)}</td>
-        <td><span class="pill">${projectQuotes(p.id).length}</span></td>
+        <td><span class="pill amber">${DB.quotations.filter(q=>q.projectId===p.id).length}</span></td>
         <td class="num" style="font-size:12px;color:var(--muted)">${esc(p.created)}</td>
         <td class="t-right"><button class="btn ghost small danger" onclick="event.stopPropagation();deleteProject('${p.id}')">Delete</button></td>
-      </tr>`).join("")}
+      </tr>`).join(""):`<tr><td colspan="7"><div class="empty">No projects for this company yet.</div></td></tr>`}
     </tbody></table></div>`;
 }
 function openProjectModal(p){
   openModal(p?"Edit project":"New project",`
+    <div class="field"><label>Issuer company (shown on all PDF headers)</label>
+      <select id="m_company">${DB.companies.map(c=>`<option value="${c.id}" ${(p?.companyId||route.companyFilter||DB.companies[0]?.id)===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}</select></div>
     <div class="field"><label>Project name</label><input id="m_name" value="${esc(p?.name||"")}" placeholder="e.g. Paragon Multifunction Room"></div>
     <div class="field-row c2">
       <div class="field"><label>Location</label><input id="m_loc" value="${esc(p?.location||"")}" placeholder="e.g. Jakarta"></div>
@@ -484,8 +526,8 @@ function openProjectModal(p){
 async function saveProjectModal(id){
   const name=$("#m_name").value.trim();
   if(!name) return alert("Project name is required.");
-  if(id){ const p=getProject(id); p.name=name; p.location=$("#m_loc").value.trim(); p.client=$("#m_client").value.trim(); }
-  else DB.projects.unshift({id:uid(),name,location:$("#m_loc").value.trim(),client:$("#m_client").value.trim(),created:todayISO(),summaryNotes:"",sig:{prepName:"",prepTitle:"",apprName:"",apprCompany:""}});
+  if(id){ const p=getProject(id); p.name=name; p.location=$("#m_loc").value.trim(); p.client=$("#m_client").value.trim(); p.companyId=$("#m_company").value; }
+  else DB.projects.unshift({id:uid(),name,location:$("#m_loc").value.trim(),client:$("#m_client").value.trim(),companyId:$("#m_company").value,created:todayISO(),summaryNotes:"",sig:{prepName:"",prepTitle:"",apprName:"",apprCompany:""}});
   closeModal(); render(); await persist(saveProjects);
 }
 async function deleteProject(id){
@@ -497,7 +539,7 @@ async function deleteProject(id){
 }
 
 /* ================= EQUIPMENT TAB ================= */
-let eqSearch="", eqF={brand:"",series:"",description:"",category:"",unit:""};
+let eqSearch="", eqF={brand:"",series:"",description:"",category:"",unit:"",distributor:""};
 function renderEquipmentTab(b){
   const cats=[...new Set(DB.equipment.map(e=>e.category).filter(Boolean))].sort();
   const fi=(k,ph)=>`<input class="colfilter" value="${esc(eqF[k])}" placeholder="${ph}" oninput="eqF['${k}']=this.value;renderEquipmentRows()">`;
@@ -514,14 +556,14 @@ function renderEquipmentTab(b){
       </select>
       <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:0 10px">
         <input type="checkbox" id="eqStaleOnly" onchange="renderEquipmentRows()"> ⚠ stale only</label>
-      <button class="btn" onclick="eqSearch='';eqF={brand:'',series:'',description:'',category:'',unit:''};render()">Clear filters</button>
+      <button class="btn" onclick="eqSearch='';eqF={brand:'',series:'',description:'',category:'',unit:'',distributor:''};render()">Clear filters</button>
     </div>
     <div class="card" style="overflow-x:auto"><table class="grid" style="min-width:860px">
       <thead>
-        <tr><th>Brand</th><th>Series / Type</th><th>Description</th><th>Category</th><th>Unit</th><th class="t-right">Sell Price</th><th class="t-right">Budget Price</th><th>Price Updated</th><th></th></tr>
+        <tr><th>Brand</th><th>Series / Type</th><th>Description</th><th>Category</th><th>Unit</th><th class="t-right">Sell Price</th><th class="t-right">Budget Price</th><th>Distributor</th><th>Price Updated</th><th></th></tr>
         <tr class="filterrow">
           <th>${fi("brand","filter…")}</th><th>${fi("series","filter…")}</th><th>${fi("description","filter…")}</th>
-          <th>${fi("category","filter…")}</th><th>${fi("unit","filter…")}</th><th></th><th></th><th></th><th></th>
+          <th>${fi("category","filter…")}</th><th>${fi("unit","filter…")}</th><th></th><th></th><th>${fi("distributor","filter…")}</th><th></th><th></th>
         </tr>
       </thead>
       <tbody id="eqRows"></tbody></table></div>`;
@@ -533,7 +575,7 @@ function renderEquipmentRows(){
   const list=DB.equipment.filter(e=>
     (!cat||e.category===cat)
     &&(!q||(e.brand+" "+e.series+" "+e.description+" "+e.category).toLowerCase().includes(q))
-    &&["brand","series","description","category","unit"].every(k=>!eqF[k]||String(e[k]||"").toLowerCase().includes(eqF[k].toLowerCase()))
+    &&["brand","series","description","category","unit","distributor"].every(k=>!eqF[k]||String(e[k]||"").toLowerCase().includes(eqF[k].toLowerCase()))
     &&(!staleOnly||isStale(e))
   );
   $("#eqRows").innerHTML=list.length?list.map(e=>`
@@ -542,6 +584,7 @@ function renderEquipmentRows(){
     <td>${e.category?`<span class="pill amber">${esc(e.category)}</span>`:""}</td>
     <td>${esc(e.unit)}</td><td class="t-right num">${fmtRp(e.price)}</td>
     <td class="t-right num" style="color:var(--muted)">${e.cost?fmtRp(e.cost):"—"}</td>
+    <td style="font-size:12px">${esc(e.distributor||"—")}</td>
     <td style="white-space:nowrap;font-size:12px">
       ${isStale(e)?`<span class="pill" style="background:var(--red-soft);color:var(--red)" title="Price not checked within the warning period — verify with supplier">⚠ ${ageLabel(e)}</span>`
         :`<span class="num" style="color:var(--muted)">${ageLabel(e)}</span>`}</td>
@@ -549,7 +592,7 @@ function renderEquipmentRows(){
       <button class="btn ghost small" title="Mark price as checked today (no change)" onclick="verifyPrice('${e.id}')">✓ Checked</button>
       <button class="btn ghost small" onclick="openEquipmentModal('${e.id}')">Edit</button>
       <button class="btn ghost small danger" onclick="deleteEquipment('${e.id}')">Delete</button></td></tr>`).join("")
-  :`<tr><td colspan="9"><div class="empty">No equipment matches these filters.</div></td></tr>`;
+  :`<tr><td colspan="10"><div class="empty">No equipment matches these filters.</div></td></tr>`;
 }
 function openEquipmentModal(id){
   const e=DB.equipment.find(x=>x.id===id);
@@ -567,6 +610,9 @@ function openEquipmentModal(id){
       <div class="field"><label>Sell price (IDR) — used in quotations</label><input id="m_price" type="number" min="0" value="${e?.price||""}"></div>
       <div class="field"><label>Budget / capital price (IDR) — used in RAP</label><input id="m_cost" type="number" min="0" value="${e?.cost||""}"></div>
     </div>
+    <div class="field"><label>Distributor / place to buy</label>
+      <input id="m_dist" value="${esc(e?.distributor||"")}" list="distList" placeholder="pick from Distributors tab or type freely">
+      <datalist id="distList">${DB.distributors.map(d=>`<option>${esc(d.name)}</option>`).join("")}</datalist></div>
     <datalist id="catList">${[...new Set(DB.equipment.map(x=>x.category).filter(Boolean))].map(c=>`<option>${esc(c)}</option>`).join("")}</datalist>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="saveEquipmentModal('${id||""}')">${e?"Save changes":"Add to database"}</button>`);
@@ -574,7 +620,7 @@ function openEquipmentModal(id){
 }
 async function saveEquipmentModal(id){
   const rec={brand:$("#m_brand").value.trim(),series:$("#m_series").value.trim(),description:$("#m_desc").value.trim(),
-    category:$("#m_cat").value.trim(),unit:$("#m_unit").value.trim()||"unit",price:Number($("#m_price").value)||0,cost:Number($("#m_cost").value)||0};
+    category:$("#m_cat").value.trim(),unit:$("#m_unit").value.trim()||"unit",price:Number($("#m_price").value)||0,cost:Number($("#m_cost").value)||0,distributor:$("#m_dist").value.trim()};
   if(!rec.brand&&!rec.series&&!rec.description) return alert("Fill in at least a brand, series or description.");
   if(id){
     const e=DB.equipment.find(x=>x.id===id);
@@ -590,6 +636,88 @@ async function verifyPrice(id){
 async function deleteEquipment(id){
   if(!confirm("Delete this item from the equipment database?")) return;
   DB.equipment=DB.equipment.filter(x=>x.id!==id); render(); await persist(saveEquipment,"Equipment deleted");
+}
+
+/* ================= DISTRIBUTORS TAB ================= */
+function renderDistributorsTab(b){
+  b.innerHTML=DB.distributors.length?`<div class="card" style="overflow-x:auto"><table class="grid" style="min-width:820px">
+    <thead><tr><th>Distributor</th><th>Contact person</th><th>Phone</th><th>Email</th><th>Address</th><th>Notes</th><th></th></tr></thead>
+    <tbody>${DB.distributors.map(d=>`
+      <tr><td style="font-weight:600">${esc(d.name)}</td><td>${esc(d.contact)}</td>
+      <td class="num" style="font-size:12.5px">${esc(d.phone)}</td><td style="font-size:12.5px">${esc(d.email)}</td>
+      <td style="font-size:12.5px;color:var(--muted);max-width:240px">${esc(d.address)}</td>
+      <td style="font-size:12.5px;color:var(--muted);max-width:180px">${esc(d.notes)}</td>
+      <td class="t-right" style="white-space:nowrap">
+        <button class="btn ghost small" onclick="openDistributorModal('${d.id}')">Edit</button>
+        <button class="btn ghost small danger" onclick="deleteDistributor('${d.id}')">Delete</button></td></tr>`).join("")}
+    </tbody></table></div>`
+  :`<div class="card"><div class="empty"><span class="eyebrow">No distributors yet</span>Store your suppliers here — they can be linked to equipment and used as the recipient of purchase orders.</div></div>`;
+}
+function openDistributorModal(id){
+  const d=DB.distributors.find(x=>x.id===id);
+  openModal(d?"Edit distributor":"Add distributor",`
+    <div class="field"><label>Distributor / store name</label><input id="m_dname" value="${esc(d?.name||"")}" placeholder="e.g. PT Distributor Audio Utama"></div>
+    <div class="field-row c2">
+      <div class="field"><label>Contact person</label><input id="m_dcontact" value="${esc(d?.contact||"")}"></div>
+      <div class="field"><label>Phone / WhatsApp</label><input id="m_dphone" value="${esc(d?.phone||"")}"></div>
+    </div>
+    <div class="field"><label>Email</label><input id="m_demail" value="${esc(d?.email||"")}"></div>
+    <div class="field"><label>Address</label><textarea id="m_daddr" rows="2">${esc(d?.address||"")}</textarea></div>
+    <div class="field"><label>Notes (payment terms, discount agreements…)</label><textarea id="m_dnotes" rows="2">${esc(d?.notes||"")}</textarea></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="saveDistributorModal('${id||""}')">${d?"Save changes":"Add distributor"}</button>`);
+  $("#m_dname").focus();
+}
+async function saveDistributorModal(id){
+  const rec={name:$("#m_dname").value.trim(),contact:$("#m_dcontact").value.trim(),phone:$("#m_dphone").value.trim(),
+    email:$("#m_demail").value.trim(),address:$("#m_daddr").value.trim(),notes:$("#m_dnotes").value.trim()};
+  if(!rec.name) return alert("Distributor name is required.");
+  if(id){ Object.assign(DB.distributors.find(x=>x.id===id),rec); } else DB.distributors.unshift({id:uid(),...rec});
+  closeModal(); render(); await persist(saveDistributors);
+}
+async function deleteDistributor(id){
+  if(!confirm("Delete this distributor? Equipment linked to it keeps the name as plain text.")) return;
+  DB.distributors=DB.distributors.filter(x=>x.id!==id); render(); await persist(saveDistributors,"Distributor deleted");
+}
+
+/* ================= COMPANIES TAB ================= */
+function renderCompaniesTab(b){
+  b.innerHTML=`<div class="card"><table class="grid">
+    <thead><tr><th>Company</th><th>Tagline</th><th>Address</th><th>Contact</th><th>Bank details</th><th></th></tr></thead>
+    <tbody>${DB.companies.map(c=>`
+      <tr><td style="font-weight:600">${esc(c.name)}</td><td style="font-size:12.5px">${esc(c.tagline)}</td>
+      <td style="font-size:12.5px;color:var(--muted);max-width:200px">${esc(c.address)}</td>
+      <td style="font-size:12.5px;color:var(--muted)">${esc(c.contact)}</td>
+      <td style="font-size:12px;color:var(--muted);white-space:pre-wrap;max-width:220px">${esc(c.bank)}</td>
+      <td class="t-right" style="white-space:nowrap">
+        <button class="btn ghost small" onclick="openCompanyModal('${c.id}')">Edit</button>
+        <button class="btn ghost small danger" onclick="deleteCompany('${c.id}')">Delete</button></td></tr>`).join("")}
+    </tbody></table></div>
+    <p style="font-size:12px;color:var(--muted);margin-top:10px">Each project selects one issuer company — its letterhead prints on every PDF, and its bank details print on invoices.</p>`;
+}
+function openCompanyModal(id){
+  const c=DB.companies.find(x=>x.id===id);
+  openModal(c?"Edit company":"Add company",`
+    <div class="field"><label>Company name</label><input id="m_cname" value="${esc(c?.name||"")}" placeholder="e.g. SW Music"></div>
+    <div class="field"><label>Tagline / division (2nd line of letterhead)</label><input id="m_ctag" value="${esc(c?.tagline||"")}"></div>
+    <div class="field"><label>Address</label><input id="m_caddr" value="${esc(c?.address||"")}"></div>
+    <div class="field"><label>Contact (email · phone)</label><input id="m_ccontact" value="${esc(c?.contact||"")}"></div>
+    <div class="field"><label>Bank details (printed on invoices)</label><textarea id="m_cbank" rows="3" placeholder="Bank BCA — 123 456 7890&#10;a.n. PT Sinergi Anugrah Mandiri">${esc(c?.bank||"")}</textarea></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="saveCompanyModal('${id||""}')">${c?"Save changes":"Add company"}</button>`);
+  $("#m_cname").focus();
+}
+async function saveCompanyModal(id){
+  const rec={name:$("#m_cname").value.trim(),tagline:$("#m_ctag").value.trim(),address:$("#m_caddr").value.trim(),
+    contact:$("#m_ccontact").value.trim(),bank:$("#m_cbank").value};
+  if(!rec.name) return alert("Company name is required.");
+  if(id){ Object.assign(DB.companies.find(x=>x.id===id),rec); } else DB.companies.unshift({id:uid(),...rec});
+  closeModal(); render(); await persist(saveCompanies);
+}
+async function deleteCompany(id){
+  if(DB.companies.length<=1) return alert("At least one company is required.");
+  if(DB.projects.some(p=>p.companyId===id) && !confirm("Some projects use this company — they will fall back to the first company in the list. Delete anyway?")) return;
+  DB.companies=DB.companies.filter(x=>x.id!==id); render(); await persist(saveCompanies,"Company deleted");
 }
 
 /* ================= NOTE TEMPLATES TAB ================= */
@@ -628,51 +756,73 @@ async function deleteTemplate(id){
 /* ================= PROJECT VIEW ================= */
 function renderProject(v,p){
   if(!p){ go({view:"home"}); return; }
-  const quotes=kindQuotes(p.id,"quote"), raps=kindQuotes(p.id,"rap");
-  const gq=quotes.reduce((a,q)=>a+quoteGrand(q),0), gr=raps.reduce((a,q)=>a+quoteGrand(q),0);
-  const docTable=(list,kind)=>`
-    <div class="card" style="margin-bottom:22px"><table class="grid">
-      <thead><tr><th>${kind==="rap"?"RAP no.":"Quotation no."}</th><th>Title / option</th><th>Date</th><th>PPN 11%</th><th class="t-right">Subtotal</th><th class="t-right">Discount</th><th class="t-right">Grand total</th><th></th></tr></thead>
-      <tbody>${list.length?list.map(q=>`
-        <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
-          <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-          <td>${esc(q.title||"Untitled")}</td>
-          <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
-          <td>${q.tax?'<span class="pill">included</span>':'<span class="pill amber">excluded</span>'}</td>
-          <td class="t-right num">${fmtRp(quoteSubtotal(q))}</td>
-          <td class="t-right num" style="color:var(--muted)">${quoteDiscount(q)?"− "+fmtRp(quoteDiscount(q)):"—"}</td>
-          <td class="t-right num" style="font-weight:700">${fmtRp(quoteGrand(q))}</td>
-          <td class="t-right" style="white-space:nowrap">
-            ${kind==="quote"?`<button class="btn ghost small" title="Create RAP from this quotation" onclick="event.stopPropagation();deriveRAP('${q.id}')">→ RAP</button>`:""}
-            <button class="btn ghost small" onclick="event.stopPropagation();duplicateQuote('${q.id}')">Duplicate</button>
-            <button class="btn ghost small danger" onclick="event.stopPropagation();deleteQuote('${q.id}')">Delete</button></td>
-        </tr>`).join("")
-      :`<tr><td colspan="8"><div class="empty"><span class="eyebrow">${kind==="rap"?"No RAP yet":"No quotations yet"}</span>${kind==="rap"?"Create one from scratch, or use “→ RAP” on a quotation to derive it with budget prices.":"Create the first quotation for this project."}</div></td></tr>`}
-      </tbody></table></div>`;
+  const co=projCompany(p);
+  const ptab=route.ptab||"docs";
   v.innerHTML=`
     <div class="page-head">
       <div>
         <button class="btn ghost small" onclick="go({view:'home'})" style="margin-bottom:8px;padding-left:0">← All projects</button>
-        <span class="eyebrow">Project</span><h1>${esc(p.name)}</h1>
+        <span class="eyebrow">Project · ${esc(co.name)}</span><h1>${esc(p.name)}</h1>
         <div class="sub">${esc(p.location||"No location")} ${p.client?"· "+esc(p.client):""}</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" onclick="openProjectModal(getProject('${p.id}'))">Edit details</button>
-        <button class="btn" onclick="openSummaryExport('${p.id}')" ${(quotes.length||raps.length)?"":"disabled"}>⤓ Export summary</button>
+        <button class="btn" onclick="openSummaryExport('${p.id}')" ${DB.quotations.some(q=>q.projectId===p.id&&["quote","rap"].includes(q.kind||"quote"))?"":"disabled"}>⤓ Export summary</button>
       </div>
     </div>
-
+    <div class="tabs">
+      <button class="tab ${ptab==="docs"?"active":""}" onclick="route.ptab='docs';render()">Quotations & RAP</button>
+      <button class="tab ${ptab==="billing"?"active":""}" onclick="route.ptab='billing';render()">Invoices & Receipts</button>
+      <button class="tab ${ptab==="po"?"active":""}" onclick="route.ptab='po';render()">Purchase Orders</button>
+    </div>
+    <div id="ptabBody"></div>`;
+  const b=$("#ptabBody");
+  if(ptab==="docs") renderProjectDocs(b,p);
+  else if(ptab==="billing") renderProjectBilling(b,p);
+  else renderProjectPO(b,p);
+}
+function docRowActions(q,kind){
+  return `${kind==="quote"?`<button class="btn ghost small" title="Create RAP from this quotation" onclick="event.stopPropagation();deriveRAP('${q.id}')">→ RAP</button>`:""}
+    ${kind==="rap"?`<button class="btn ghost small" title="Create a purchase order from selected items" onclick="event.stopPropagation();openPOFromRAP('${q.id}')">→ PO</button>`:""}
+    ${kind==="invoice"?`<button class="btn ghost small" title="Create receipt for this invoice" onclick="event.stopPropagation();receiptFromInvoice('${q.id}')">→ Receipt</button>`:""}
+    <button class="btn ghost small" onclick="event.stopPropagation();duplicateQuote('${q.id}')">Duplicate</button>
+    <button class="btn ghost small danger" onclick="event.stopPropagation();deleteQuote('${q.id}')">Delete</button>`;
+}
+function docTable(list,kind,emptyMsg){
+  return `<div class="card" style="margin-bottom:22px"><table class="grid">
+    <thead><tr><th>${KIND_LABEL[kind]} no.</th><th>Title</th><th>Date</th>${kind==="po"?"<th>Distributor</th>":""}${kind!=="receipt"?'<th>PPN 11%</th><th class="t-right">Subtotal</th><th class="t-right">Discount</th>':"<th>Received from</th>"}<th class="t-right">${kind==="receipt"?"Amount":"Grand total"}</th><th></th></tr></thead>
+    <tbody>${list.length?list.map(q=>`
+      <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
+        <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
+        <td>${esc(q.title||"Untitled")}</td>
+        <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
+        ${kind==="po"?`<td>${esc(q.extra?.distributor||"—")}</td>`:""}
+        ${kind!=="receipt"?`
+          <td>${q.tax?'<span class="pill">included</span>':'<span class="pill amber">excluded</span>'}</td>
+          <td class="t-right num">${fmtRp(quoteSubtotal(q))}</td>
+          <td class="t-right num" style="color:var(--muted)">${quoteDiscount(q)?"− "+fmtRp(quoteDiscount(q)):"—"}</td>
+          <td class="t-right num" style="font-weight:700">${fmtRp(quoteGrand(q))}</td>`
+        :`<td>${esc(q.extra?.recvFrom||"—")}</td>
+          <td class="t-right num" style="font-weight:700">${fmtRp(q.extra?.amount||0)}</td>`}
+        <td class="t-right" style="white-space:nowrap">${docRowActions(q,kind)}</td>
+      </tr>`).join("")
+    :`<tr><td colspan="9"><div class="empty">${emptyMsg}</div></td></tr>`}
+    </tbody></table></div>`;
+}
+function renderProjectDocs(b,p){
+  const quotes=kindQuotes(p.id,"quote"), raps=kindQuotes(p.id,"rap");
+  const gq=quotes.reduce((a,q)=>a+quoteGrand(q),0), gr=raps.reduce((a,q)=>a+quoteGrand(q),0);
+  b.innerHTML=`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <span class="eyebrow">Quotations (selling)</span>
       <button class="btn primary small" onclick="newQuote('${p.id}','quote')">+ New quotation</button>
     </div>
-    ${docTable(quotes,"quote")}
-
+    ${docTable(quotes,"quote","Create the first quotation for this project.")}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <span class="eyebrow" style="color:var(--amber)">RAP / Project budget estimation (internal)</span>
       <button class="btn dark small" onclick="newQuote('${p.id}','rap')">+ New RAP</button>
     </div>
-    ${docTable(raps,"rap")}
+    ${docTable(raps,"rap","Create one from scratch, or use “→ RAP” on a quotation to derive it with budget prices.")}
 
     <div class="card card-pad" style="margin-bottom:22px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px">
@@ -725,6 +875,124 @@ function renderProject(v,p){
       </div>
     </div>`:""}`;
 }
+function renderProjectBilling(b,p){
+  const invs=kindQuotes(p.id,"invoice"), recs=kindQuotes(p.id,"receipt");
+  const paid=recs.reduce((a,r)=>a+(Number(r.extra?.amount)||0),0);
+  const billed=invs.reduce((a,q)=>a+quoteGrand(q),0);
+  b.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="eyebrow">Invoices to client</span>
+      <button class="btn primary small" onclick="newQuote('${p.id}','invoice')">+ New invoice</button>
+    </div>
+    ${docTable(invs,"invoice","Create an invoice — inside it you can import a full quotation BoQ or bill a percentage (e.g. 50% down payment).")}
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="eyebrow">Receipts (kwitansi)</span>
+      <button class="btn primary small" onclick="newQuote('${p.id}','receipt')">+ New receipt</button>
+    </div>
+    ${docTable(recs,"receipt","Create a receipt manually, or use “→ Receipt” on a paid invoice.")}
+    ${(invs.length||recs.length)?`
+    <div class="card card-pad" style="max-width:560px"><div class="totals" style="max-width:none">
+      <div class="line"><span>Total invoiced</span><span class="num">${fmtRp(billed)}</span></div>
+      <div class="line"><span>Total receipted (paid)</span><span class="num">${fmtRp(paid)}</span></div>
+      <div class="line grand"><span>Outstanding</span><span class="num" style="color:${billed-paid>0?"var(--red)":"var(--accent-dark)"}">${fmtRp(billed-paid)}</span></div>
+    </div></div>`:""}`;
+}
+function renderProjectPO(b,p){
+  const pos=kindQuotes(p.id,"po");
+  const total=pos.reduce((a,q)=>a+quoteGrand(q),0);
+  b.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="eyebrow">Purchase orders to distributors / stores</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn small" onclick="pickRAPForPO('${p.id}')">+ PO from RAP items</button>
+        <button class="btn primary small" onclick="newQuote('${p.id}','po')">+ Blank PO</button>
+      </div>
+    </div>
+    ${docTable(pos,"po","Create a PO from RAP items (recommended) — pick the lines to order and the distributor — or start blank.")}
+    ${pos.length?`<div class="card card-pad" style="max-width:460px"><div class="totals" style="max-width:none">
+      <div class="line grand"><span>Total purchasing</span><span class="num">${fmtRp(total)}</span></div></div></div>`:""}`;
+}
+
+/* ---------- document creation flows ---------- */
+async function newQuote(pid,kind){
+  kind=kind||"quote";
+  const p=getProject(pid);
+  const n=kindQuotes(pid,kind).length+1;
+  const q={id:uid(),projectId:pid,quoteNumber:"",title:KIND_LABEL[kind]+" "+n,date:todayISO(),
+    tax:kind!=="receipt",kind,discount:{type:"percent",value:0},
+    sections:kind==="receipt"?[]:[{name:kind==="invoice"?"Billing Items":kind==="po"?"Order Items":"Main Equipment",items:[]}],
+    notes:"",extra:kind==="receipt"?{recvFrom:p?.client||"",amount:0,forText:"",payMethod:"Transfer"}:kind==="po"?{distributor:"",shipTo:""}:{}};
+  DB.quotations.push(q);
+  await persist(saveQuotes,KIND_LABEL[kind]+" created");
+  go({view:"quote",quoteId:q.id});
+}
+function pickRAPForPO(pid){
+  const raps=kindQuotes(pid,"rap");
+  if(!raps.length) return alert("No RAP in this project yet — create a RAP first (its budget prices become the PO prices).");
+  if(raps.length===1) return openPOFromRAP(raps[0].id);
+  openModal("Create PO — choose source RAP",`
+    <div class="field"><label>RAP to order from</label>
+      <select id="po_src">${raps.map(r=>`<option value="${r.id}">${esc(r.quoteNumber||r.title)}</option>`).join("")}</select></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="openPOFromRAP($('#po_src').value)">Next — pick items</button>`);
+}
+function openPOFromRAP(rapId){
+  const rap=getQuote(rapId);
+  let rows="", idx=0;
+  rap.sections.forEach((sec,si)=>{
+    rows+=`<tr style="background:#F3F6F3"><td colspan="5" style="font-weight:700;font-size:12px">${esc(sec.name).toUpperCase()}
+      <label style="font-weight:400;margin-left:10px;font-size:11.5px;color:var(--muted)"><input type="checkbox" onchange="document.querySelectorAll('.poi-s${si}').forEach(c=>c.checked=this.checked)"> select all</label></td></tr>`;
+    sec.items.forEach((it,ii)=>{ idx++;
+      const d=getDistributor((DB.equipment.find(x=>x.brand.trim().toLowerCase()===String(it.brand).trim().toLowerCase()&&x.series.trim().toLowerCase()===String(it.series).trim().toLowerCase())||{}).distributor);
+      rows+=`<tr>
+        <td><input type="checkbox" class="poitem poi-s${si}" data-si="${si}" data-ii="${ii}"></td>
+        <td style="font-weight:600;white-space:nowrap">${esc(it.brand)} ${esc(it.series)}</td>
+        <td style="font-size:12px;color:var(--muted)">${esc(it.description)}</td>
+        <td class="num" style="white-space:nowrap">${fmtN(it.qty)} ${esc(it.unit)} × ${fmtRp(it.price)}</td>
+        <td style="font-size:11.5px;color:var(--accent-dark)">${d?esc(d.name):""}</td></tr>`;
+    });
+  });
+  openModal("Create purchase order — select items from “"+esc(rap.title||rap.quoteNumber||"RAP")+"”",`
+    <div class="field"><label>Distributor / store (recipient of the PO)</label>
+      <select id="po_dist">
+        <option value="">— choose distributor —</option>
+        ${DB.distributors.map(d=>`<option value="${esc(d.name)}">${esc(d.name)}</option>`).join("")}
+      </select>
+      <span style="font-size:11.5px;color:var(--muted)">Tip: the last column shows each item's distributor from the equipment database. Create one PO per distributor.</span></div>
+    <div style="max-height:44vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px">
+      <table class="grid"><tbody>${rows}</tbody></table></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="doPOFromRAP('${rapId}')">Create PO with selected items</button>`,true);
+}
+async function doPOFromRAP(rapId){
+  const rap=getQuote(rapId);
+  const dist=$("#po_dist").value;
+  const picked=[...document.querySelectorAll(".poitem:checked")].map(c=>({si:+c.dataset.si,ii:+c.dataset.ii}));
+  if(!picked.length) return alert("Select at least one item.");
+  const sections=[];
+  rap.sections.forEach((sec,si)=>{
+    const items=sec.items.filter((_,ii)=>picked.some(x=>x.si===si&&x.ii===ii)).map(it=>JSON.parse(JSON.stringify(it)));
+    if(items.length) sections.push({name:sec.name,items});
+  });
+  closeModal();
+  const q={id:uid(),projectId:rap.projectId,quoteNumber:"",title:"PO — "+(dist||"order")+" ("+(rap.quoteNumber||rap.title)+")",
+    date:todayISO(),tax:true,kind:"po",discount:{type:"percent",value:0},sections,notes:"",
+    extra:{distributor:dist,shipTo:"",refRAP:rap.quoteNumber||rap.title}};
+  DB.quotations.push(q);
+  route.ptab="po";
+  await persist(saveQuotes,"PO created with "+picked.length+" item(s)");
+  go({view:"quote",quoteId:q.id});
+}
+async function receiptFromInvoice(invId){
+  const inv=getQuote(invId), p=getProject(inv.projectId);
+  const q={id:uid(),projectId:inv.projectId,quoteNumber:"",title:"Receipt — "+(inv.quoteNumber||inv.title),
+    date:todayISO(),tax:false,kind:"receipt",discount:{type:"percent",value:0},sections:[],notes:"",
+    extra:{recvFrom:p?.client||"",amount:quoteGrand(inv),forText:"Payment of Invoice "+(inv.quoteNumber||inv.title)+" — "+p.name,payMethod:"Transfer"}};
+  DB.quotations.push(q);
+  route.ptab="billing";
+  await persist(saveQuotes,"Receipt created from invoice");
+  go({view:"quote",quoteId:q.id});
+}
 function openSummaryExport(pid){
   const nq=kindQuotes(pid,"quote").length, nr=kindQuotes(pid,"rap").length;
   openModal("Export project summary",`
@@ -738,15 +1006,6 @@ function openSummaryExport(pid){
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn" onclick="const sc=$('#sum_scope').value;closeModal();exportSummaryXlsx('${pid}',sc)">⤓ Excel</button>
      <button class="btn primary" onclick="const sc=$('#sum_scope').value;closeModal();setTimeout(()=>printSummary('${pid}',sc),60)">⤓ PDF</button>`);
-}
-async function newQuote(pid,kind){
-  kind=kind||"quote";
-  const n=kindQuotes(pid,kind).length+1;
-  const q={id:uid(),projectId:pid,quoteNumber:"",title:(kind==="rap"?"RAP ":"Quotation ")+n,date:todayISO(),tax:true,kind,
-    discount:{type:"percent",value:0},sections:[{name:"Main Equipment",items:[]}],notes:""};
-  DB.quotations.push(q);
-  await persist(saveQuotes,(kind==="rap"?"RAP":"Quotation")+" created");
-  go({view:"quote",quoteId:q.id});
 }
 function deriveRAP(qid){
   const src=getQuote(qid);
@@ -781,7 +1040,7 @@ async function doDeriveRAP(qid){
   const copy=JSON.parse(JSON.stringify(src));
   copy.id=uid(); copy.kind="rap"; copy.quoteNumber="";
   copy.title="RAP — "+(src.title||src.quoteNumber||"Quotation");
-  copy.discount={type:"percent",value:0};
+  copy.discount={type:"percent",value:0}; copy.extra={};
   let fromDB=0, fromPct=0, kept=0;
   copy.sections.forEach(sec=>sec.items.forEach(it=>{
     const e=(mode!=="pct")?DB.equipment.find(x=>x.brand.trim().toLowerCase()===String(it.brand).trim().toLowerCase()
@@ -801,22 +1060,22 @@ async function doDeriveRAP(qid){
 }
 async function duplicateQuote(id){
   const q=getQuote(id);
-  const copy=JSON.parse(JSON.stringify(q)); copy.id=uid(); copy.title=(q.title||"Quotation")+" (copy)"; copy.quoteNumber="";
+  const copy=JSON.parse(JSON.stringify(q)); copy.id=uid(); copy.title=(q.title||KIND_LABEL[q.kind||"quote"])+" (copy)"; copy.quoteNumber="";
   DB.quotations.push(copy); render(); await persist(saveQuotes,"Duplicated");
 }
 async function deleteQuote(id){
   if(!confirm("Delete this document? It will also be removed from the Google Sheet.")) return;
   DB.quotations=DB.quotations.filter(q=>q.id!==id); render(); await persist(saveQuotes,"Deleted");
 }
-
 /* ================= QUOTATION EDITOR ================= */
 function renderQuote(v,q,p){
   if(!q||!p){ go({view:"home"}); return; }
+  if(q.kind==="receipt"){ renderReceipt(v,q,p); return; }
   v.innerHTML=`
     <div class="page-head">
       <div>
         <button class="btn ghost small" onclick="go({view:'project',projectId:'${p.id}'})" style="margin-bottom:8px;padding-left:0">← ${esc(p.name)}</button>
-        <span class="eyebrow" ${q.kind==="rap"?'style="color:var(--amber)"':""}>${q.kind==="rap"?"RAP / Budget estimation (internal)":"Quotation"}</span>
+        <span class="eyebrow" ${q.kind==="rap"?'style="color:var(--amber)"':""}>${q.kind==="rap"?"RAP / Budget estimation (internal)":q.kind==="invoice"?"Invoice":q.kind==="po"?"Purchase order":"Quotation"} · ${esc(projCompany(p).name)}</span>
         <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(480px,80vw)" value="${esc(q.title)}" placeholder="Quotation title / option name" onchange="qSet('${q.id}','title',this.value)"></h1>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -828,7 +1087,7 @@ function renderQuote(v,q,p){
 
     <div class="card card-pad" style="margin-bottom:22px">
       <div class="field-row c3">
-        <div class="field"><label>${q.kind==="rap"?"RAP":"Quotation"} number (manual)</label><input value="${esc(q.quoteNumber)}" placeholder="e.g. Q/SAM/2026/07-014" onchange="qSet('${q.id}','quoteNumber',this.value)"></div>
+        <div class="field"><label>${KIND_LABEL[q.kind||"quote"]} number (manual)</label><input value="${esc(q.quoteNumber)}" placeholder="e.g. Q/SAM/2026/07-014" onchange="qSet('${q.id}','quoteNumber',this.value)"></div>
         <div class="field"><label>Date</label><input type="date" value="${esc(q.date)}" onchange="qSet('${q.id}','date',this.value)"></div>
         <div class="field"><label>Tax</label>
           <select onchange="qSet('${q.id}','tax',this.value==='1')">
@@ -836,7 +1095,21 @@ function renderQuote(v,q,p){
             <option value="0" ${q.tax?"":"selected"}>No tax (exclude PPN)</option>
           </select></div>
       </div>
-      <div class="sub" style="color:var(--muted);font-size:12px">Header on the PDF will show: export date · project “${esc(p.name)}” · ${esc(p.location||"no location")} · quotation number above.</div>
+      ${q.kind==="invoice"?`
+      <div class="field-row c2">
+        <div class="field"><label>Bill to (client)</label><input value="${esc(q.extra?.billTo||p.client||"")}" placeholder="defaults to project client" onchange="exSet('${q.id}','billTo',this.value)"></div>
+        <div class="field"><label>&nbsp;</label><button class="btn" onclick="openInvoiceImport('${q.id}')">⇐ Import from quotation (full / % down payment)</button></div>
+      </div>`:""}
+      ${q.kind==="po"?`
+      <div class="field-row c2">
+        <div class="field"><label>Distributor / store (PO recipient)</label>
+          <select onchange="exSet('${q.id}','distributor',this.value)">
+            <option value="">— choose distributor —</option>
+            ${DB.distributors.map(d=>`<option value="${esc(d.name)}" ${q.extra?.distributor===d.name?"selected":""}>${esc(d.name)}</option>`).join("")}
+          </select></div>
+        <div class="field"><label>Ship to / delivery address</label><input value="${esc(q.extra?.shipTo||"")}" placeholder="e.g. project site or warehouse" onchange="exSet('${q.id}','shipTo',this.value)"></div>
+      </div>`:""}
+      <div class="sub" style="color:var(--muted);font-size:12px">Header on the PDF will show: export date · project “${esc(p.name)}” · ${esc(p.location||"no location")} · the number above · issuer ${esc(projCompany(p).name)}.</div>
     </div>
 
     <div id="sections">${q.sections.map((s,si)=>sectionHTML(q,s,si)).join("")}</div>
@@ -920,6 +1193,7 @@ function sectionHTML(q,s,si){
 /* quote mutators */
 function qSet(id,k,v){ getQuote(id)[k]=v; setDirty(true); render(); }
 function qSetSilent(id,k,v){ getQuote(id)[k]=v; setDirty(true); }
+function exSet(id,k,v){ const q=getQuote(id); q.extra=q.extra||{}; q.extra[k]=v; setDirty(true); }
 function setDiscount(id,k,v){ const q=getQuote(id); q.discount=q.discount||{type:"percent",value:0}; q.discount[k]=v; setDirty(true); render(); }
 function addSection(id){ getQuote(id).sections.push({name:"New Section",items:[]}); setDirty(true); render(); }
 function renameSection(id,si,v){ getQuote(id).sections[si].name=v; setDirty(true); }
@@ -961,6 +1235,78 @@ async function saveNotesAsTemplate(qid){
   DB.templates.unshift({id:uid(),name,content:q.notes}); await persist(saveTemplates,"Template saved"); render();
 }
 
+/* ---------- invoice: import from quotation ---------- */
+function openInvoiceImport(invId){
+  const inv=getQuote(invId);
+  const quotes=kindQuotes(inv.projectId,"quote");
+  if(!quotes.length) return alert("No quotations in this project to import from.");
+  openModal("Import into invoice",`
+    <div class="field"><label>Source quotation</label>
+      <select id="inv_src">${quotes.map(x=>`<option value="${x.id}">${esc(x.quoteNumber||x.title)} — ${fmtRp(quoteGrand(x))}</option>`).join("")}</select></div>
+    <div class="field"><label>Billing mode</label>
+      <select id="inv_mode">
+        <option value="pct" selected>Percentage line (e.g. down payment / progress payment)</option>
+        <option value="full">Full BoQ — copy all sections and items</option>
+      </select></div>
+    <div class="field" id="inv_pct_wrap"><label>Percentage of quotation value (before PPN)</label>
+      <input id="inv_pct" type="number" min="1" max="100" step="any" value="50">
+      <span style="font-size:12px;color:var(--muted)">Calculated on subtotal after discount, excluding PPN — the invoice's own PPN toggle adds tax on top, avoiding double taxation.</span></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="doInvoiceImport('${invId}')">Import</button>`);
+  $("#inv_mode").addEventListener("change",e=>{ $("#inv_pct_wrap").style.display=e.target.value==="pct"?"flex":"none"; });
+}
+function doInvoiceImport(invId){
+  const inv=getQuote(invId), src=getQuote($("#inv_src").value);
+  const mode=$("#inv_mode").value;
+  if(mode==="full"){
+    inv.sections=JSON.parse(JSON.stringify(src.sections));
+  }else{
+    const pct=Number($("#inv_pct").value)||50;
+    const base=quoteSubtotal(src)-quoteDiscount(src);
+    const amount=Math.round(base*pct/100);
+    inv.sections=inv.sections.length?inv.sections:[{name:"Billing Items",items:[]}];
+    inv.sections[0].items.push({brand:"",series:"",description:`${fmtN(pct)}% payment — ${src.quoteNumber||src.title} (contract value ${fmtRp(base)} excl. PPN)`,qty:1,unit:"lot",price:amount});
+  }
+  inv.extra=inv.extra||{}; inv.extra.refQuote=src.quoteNumber||src.title;
+  closeModal(); setDirty(true); render(); toast("Imported from "+(src.quoteNumber||src.title));
+}
+
+/* ================= RECEIPT EDITOR ================= */
+function renderReceipt(v,q,p){
+  const x=q.extra||{};
+  v.innerHTML=`
+    <div class="page-head">
+      <div>
+        <button class="btn ghost small" onclick="route.ptab='billing';go({view:'project',projectId:'${p.id}'})" style="margin-bottom:8px;padding-left:0">← ${esc(p.name)}</button>
+        <span class="eyebrow">Receipt / Kwitansi · ${esc(projCompany(p).name)}</span>
+        <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(480px,80vw)" value="${esc(q.title)}" onchange="qSet('${q.id}','title',this.value)"></h1>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" onclick="printReceipt('${q.id}')">⤓ PDF</button>
+        <button class="btn primary" onclick="persist(saveQuotes)">Save</button>
+      </div>
+    </div>
+    <div class="card card-pad" style="max-width:720px">
+      <div class="field-row c2">
+        <div class="field"><label>Receipt number (manual)</label><input value="${esc(q.quoteNumber)}" placeholder="e.g. KW/SAM/2026/07-003" onchange="qSet('${q.id}','quoteNumber',this.value)"></div>
+        <div class="field"><label>Date</label><input type="date" value="${esc(q.date)}" onchange="qSet('${q.id}','date',this.value)"></div>
+      </div>
+      <div class="field"><label>Received from (Telah terima dari)</label><input value="${esc(x.recvFrom||"")}" placeholder="client / payer name" onchange="exSet('${q.id}','recvFrom',this.value)"></div>
+      <div class="field"><label>For payment of (Untuk pembayaran)</label><textarea rows="2" onchange="exSet('${q.id}','forText',this.value)">${esc(x.forText||"")}</textarea></div>
+      <div class="field-row c2">
+        <div class="field"><label>Amount (IDR)</label><input type="number" min="0" value="${x.amount||0}" onchange="exSet('${q.id}','amount',Number(this.value)||0);render()"></div>
+        <div class="field"><label>Payment method</label>
+          <select onchange="exSet('${q.id}','payMethod',this.value)">
+            ${["Transfer","Cash","Cheque / Giro"].map(m=>`<option ${x.payMethod===m?"selected":""}>${m}</option>`).join("")}
+          </select></div>
+      </div>
+      <div style="background:var(--accent-soft);border-radius:8px;padding:10px 14px;font-size:13px">
+        <span class="eyebrow">Amount in words (auto)</span><br>
+        <em style="text-transform:capitalize">${esc(terbilang(x.amount||0))}</em>
+      </div>
+    </div>`;
+}
+
 /* ================= equipment picker ================= */
 let pickerCtx=null;
 function openPicker(qid,si){
@@ -980,16 +1326,16 @@ function renderPicker(){
   $("#pkRows").innerHTML=list.length?list.map(e=>`
     <tr><td style="font-weight:600;white-space:nowrap">${esc(e.brand)}</td><td style="white-space:nowrap">${esc(e.series)}</td>
     <td style="color:var(--muted);font-size:12.5px">${esc(e.description)}</td>
-    <td class="t-right num" style="white-space:nowrap">${isStale(e)?`<span title="Price last checked ${ageLabel(e)} — verify before quoting" style="color:var(--red);cursor:help">⚠ </span>`:""}${getQuote(pickerCtx.qid)?.kind==="rap"?(e.cost?fmtRp(e.cost):fmtRp(e.price)+" *"):fmtRp(e.price)}</td>
+    <td class="t-right num" style="white-space:nowrap">${isStale(e)?`<span title="Price last checked ${ageLabel(e)} — verify before quoting" style="color:var(--red);cursor:help">⚠ </span>`:""}${["rap","po"].includes(getQuote(pickerCtx.qid)?.kind)?(e.cost?fmtRp(e.cost):fmtRp(e.price)+" *"):fmtRp(e.price)}</td>
     <td class="t-right"><button class="btn small primary" onclick="pickItem('${e.id}')">Add</button></td></tr>`).join("")
   :`<tr><td style="padding:20px;text-align:center;color:var(--muted)">No matches in the equipment database.</td></tr>`;
 }
 function pickItem(eid){
   const e=DB.equipment.find(x=>x.id===eid), {qid,si}=pickerCtx;
   const q=getQuote(qid);
-  const price=(q.kind==="rap")?(e.cost>0?e.cost:e.price):e.price;
+  const price=(q.kind==="rap"||q.kind==="po")?(e.cost>0?e.cost:e.price):e.price;
   q.sections[si].items.push({brand:e.brand,series:e.series,description:e.description,qty:1,unit:e.unit||"unit",price});
-  setDirty(true); toast(e.brand+" "+e.series+" added"+(q.kind==="rap"&&e.cost>0?" (budget price)":""));
+  setDirty(true); toast(e.brand+" "+e.series+" added"+((q.kind==="rap"||q.kind==="po")&&e.cost>0?" (budget price)":""));
   render(); // re-render page behind modal
 }
 
@@ -1011,14 +1357,14 @@ function signBlockHTML(p,approverLabel,defaultApprName){
     <div class="box">Prepared by,<div class="line"></div>
       <div class="sname">${S.prepName?"( "+esc(S.prepName)+" )":blank}</div>
       ${S.prepTitle?`<div class="srole">${esc(S.prepTitle)}</div>`:""}
-      <div class="sco">${esc(CONFIG.COMPANY.name)}</div></div>
+      <div class="sco">${esc(projCompany(p).name)}</div></div>
     <div class="box">${esc(approverLabel)},<div class="line"></div>
       <div class="sname">${apprName?"( "+esc(apprName)+" )":blank}</div>
       ${S.apprCompany?`<div class="sco">${esc(S.apprCompany)}</div>`:""}</div>
   </div>`;
 }
 function docHeaderHTML(title,p,metaRows){
-  const C=CONFIG.COMPANY;
+  const C=projCompany(p);
   return `<div class="p-head">
       <div class="p-co">${esc(C.name)}<small>${esc(C.tagline)}\n${esc(C.address)}\n${esc(C.contact)}</small></div>
       <div class="p-doc-title"><h2>${title}</h2></div>
@@ -1040,13 +1386,20 @@ function printQuote(qid){
     });
     rows+=`<tr class="subtotal"><td colspan="7" style="text-align:right">Subtotal — ${esc(s.name)}</td><td class="num-p" style="text-align:right">${fmtRp(sectionTotal(s))}</td></tr>`;
   });
-  const isRap=q.kind==="rap";
+  const isRap=q.kind==="rap", isInv=q.kind==="invoice", isPO=q.kind==="po";
+  const title=isRap?"PROJECT BUDGET (RAP)":isInv?"INVOICE":isPO?"PURCHASE ORDER":"QUOTATION";
+  const dist=isPO?getDistributor(q.extra?.distributor):null;
+  const meta=[["Project",p.name],["Location",p.location||"—"],
+      [KIND_LABEL[q.kind||"quote"]+" no.",q.quoteNumber||"—"],["Title",q.title||"—"],
+      ["Date",fmtDate(q.date)],["Exported",new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})]];
+  if(isInv) meta.splice(2,0,["Bill to",q.extra?.billTo||p.client||"—"]);
+  if(isPO){ meta.splice(2,0,["Ship to",q.extra?.shipTo||"—"]); if(q.extra?.refRAP) meta.push(["Ref. RAP",q.extra.refRAP]); }
   $("#printArea").innerHTML=`<div class="p-doc">
-    ${docHeaderHTML(isRap?"PROJECT BUDGET (RAP)":"QUOTATION",p,[
-      ["Project",p.name],["Location",p.location||"—"],
-      [(isRap?"RAP no.":"Quotation no."),q.quoteNumber||"—"],["Title",q.title||"—"],
-      ["Date",fmtDate(q.date)],["Exported",new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})]
-    ])}
+    ${docHeaderHTML(title,p,meta)}
+    ${isPO?`<div style="border:1pt solid #111;padding:8px 10px;margin-bottom:10px;font-size:11px">
+      <strong>TO — ${esc(q.extra?.distributor||"(distributor)")}</strong>
+      ${dist?`<div style="color:#333;margin-top:2px">${dist.contact?"Attn: "+esc(dist.contact)+" · ":""}${esc(dist.phone||"")}${dist.email?" · "+esc(dist.email):""}${dist.address?"<br>"+esc(dist.address):""}</div>`:""}
+    </div>`:""}
     <table class="p-table">
       <thead><tr><th style="width:24px">No</th><th style="width:80px">Brand</th><th style="width:105px">Series / Type</th><th>Description</th><th style="width:44px;text-align:right">Qty</th><th style="width:44px">Unit</th><th style="width:92px;text-align:right">Unit Price</th><th style="width:96px;text-align:right">Total Price</th></tr></thead>
       <tbody>${rows}</tbody>
@@ -1057,8 +1410,45 @@ function printQuote(qid){
       <tr><td>PPN 11%${q.tax?"":" (excluded)"}</td><td class="num-p" style="text-align:right">${q.tax?fmtRp(quoteTax(q)):"—"}</td></tr>
       <tr class="g"><td>GRAND TOTAL</td><td class="num-p" style="text-align:right">${fmtRp(quoteGrand(q))}</td></tr>
     </tbody></table>
+    ${isInv?`<div style="margin-top:10px;font-size:11px"><em>Terbilang: <strong style="text-transform:capitalize">${esc(terbilang(quoteGrand(q)))}</strong></em></div>`:""}
+    ${isInv&&projCompany(p).bank?`<div style="border:1pt solid #111;padding:8px 10px;margin-top:12px;font-size:11px;width:60%">
+      <strong>PAYMENT — PLEASE TRANSFER TO:</strong><div style="white-space:pre-wrap;margin-top:3px">${esc(projCompany(p).bank)}</div></div>`:""}
     ${q.notes.trim()?`<div class="p-notes"><h4>Notes & Terms</h4><div>${esc(q.notes)}</div></div>`:""}
-    ${signBlockHTML(p,"Approved by",isRap?"Management":(p.client||""))}
+    ${isPO?poSignHTML(p,q):signBlockHTML(p,isInv?"Received by":"Approved by",isRap?"Management":isInv?"":(p.client||""))}
+  </div>`;
+  window.print();
+}
+function poSignHTML(p,q){
+  const S=(p&&p.sig)||{};
+  const blank='(&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;)';
+  return `<div class="p-sign">
+    <div class="box">Ordered by,<div class="line"></div>
+      <div class="sname">${S.prepName?"( "+esc(S.prepName)+" )":blank}</div>
+      ${S.prepTitle?`<div class="srole">${esc(S.prepTitle)}</div>`:""}
+      <div class="sco">${esc(projCompany(p).name)}</div></div>
+    <div class="box">Accepted by,<div class="line"></div>
+      <div class="sname">${blank}</div>
+      <div class="sco">${esc(q.extra?.distributor||"Distributor")}</div></div>
+  </div>`;
+}
+function printReceipt(qid){
+  const q=getQuote(qid), p=getProject(q.projectId), x=q.extra||{}, C=projCompany(p);
+  if(dirty) persist(saveQuotes);
+  $("#printArea").innerHTML=`<div class="p-doc">
+    ${docHeaderHTML("KWITANSI / RECEIPT",p,[["Receipt no.",q.quoteNumber||"—"],["Date",fmtDate(q.date)],["Project",p.name]])}
+    <table class="p-meta" style="margin-top:16px;font-size:12px">
+      <tr><td class="k" style="width:190px">Telah terima dari<br><span style="font-size:9px;color:#777">Received from</span></td><td>: <strong>${esc(x.recvFrom||"—")}</strong></td></tr>
+      <tr><td class="k">Uang sejumlah<br><span style="font-size:9px;color:#777">Amount in words</span></td>
+        <td>: <em style="text-transform:capitalize;background:#EFEFEF;padding:2px 8px;display:inline-block">${esc(terbilang(x.amount||0))}</em></td></tr>
+      <tr><td class="k">Untuk pembayaran<br><span style="font-size:9px;color:#777">For payment of</span></td><td>: ${esc(x.forText||"—")}</td></tr>
+      <tr><td class="k">Metode pembayaran<br><span style="font-size:9px;color:#777">Payment method</span></td><td>: ${esc(x.payMethod||"—")}</td></tr>
+    </table>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:26px">
+      <div style="border:1.4pt solid #111;padding:8px 16px;font-size:16px;font-weight:800" class="num-p">${fmtRp(x.amount||0)}</div>
+      <div style="width:230px;font-size:11px;text-align:center">${esc(p.location||"")}, ${fmtDate(q.date)}<div style="border-bottom:1px solid #111;height:56px;margin:4px 0 5px"></div>
+        <div style="font-weight:700">${(p.sig?.prepName)?"( "+esc(p.sig.prepName)+" )":"(&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;)"}</div>
+        <div style="font-size:10.5px;font-weight:600">${esc(C.name)}</div></div>
+    </div>
   </div>`;
   window.print();
 }
@@ -1107,12 +1497,14 @@ function printSummary(pid,scope){
 function needXLSX(){ if(!window.XLSX){ alert("Excel library did not load (check ad blocker / connection) — try refreshing."); return true; } return false; }
 function sheetFromAOA(aoa,widths){ const ws=XLSX.utils.aoa_to_sheet(aoa); if(widths) ws["!cols"]=widths.map(w=>({wch:w})); return ws; }
 function quoteAOA(q,p){
-  const isRap=q.kind==="rap";
+  const isRap=q.kind==="rap", C=projCompany(p);
   const aoa=[
-    [CONFIG.COMPANY.name],[CONFIG.COMPANY.tagline],[],
-    [isRap?"PROJECT BUDGET (RAP)":"QUOTATION"],
+    [C.name],[C.tagline],[],
+    [isRap?"PROJECT BUDGET (RAP)":q.kind==="invoice"?"INVOICE":q.kind==="po"?"PURCHASE ORDER":"QUOTATION"],
     ["Project",p.name],["Location",p.location||""],["Number",q.quoteNumber||""],
-    ["Title",q.title||""],["Date",q.date||""],["Exported",todayISO()],[],
+    ["Title",q.title||""],["Date",q.date||""],["Exported",todayISO()],
+    ...(q.kind==="invoice"?[["Bill to",q.extra?.billTo||p.client||""]]:[]),
+    ...(q.kind==="po"?[["Distributor",q.extra?.distributor||""],["Ship to",q.extra?.shipTo||""]]:[]),[],
     ["No","Brand","Series / Type","Description","Qty","Unit","Unit Price (IDR)","Total (IDR)"]
   ];
   let no=0;
@@ -1134,7 +1526,7 @@ function exportQuoteXlsx(qid){
   const q=getQuote(qid), p=getProject(q.projectId);
   if(dirty) persist(saveQuotes);
   const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,sheetFromAOA(quoteAOA(q,p),[5,16,20,44,7,8,16,16]),(q.kind==="rap"?"RAP":"Quotation").slice(0,31));
+  XLSX.utils.book_append_sheet(wb,sheetFromAOA(quoteAOA(q,p),[5,16,20,44,7,8,16,16]),(KIND_LABEL[q.kind||"quote"].replace(" ","")).slice(0,31));
   const fname=((q.quoteNumber||q.title||"quotation").replace(/[\\/:*?"<>|]/g,"-"))+".xlsx";
   XLSX.writeFile(wb,fname); toast("Excel exported");
 }
@@ -1145,7 +1537,7 @@ function exportSummaryXlsx(pid,scope){
   const quotes=scope==="rap"?[]:kindQuotes(pid,"quote");
   const raps=scope==="quote"?[]:kindQuotes(pid,"rap");
   const wb=XLSX.utils.book_new();
-  const sumAOA=[[CONFIG.COMPANY.name],[(scope==="quote"?"QUOTATION SUMMARY — ":scope==="rap"?"RAP SUMMARY (INTERNAL) — ":"PROJECT SUMMARY — ")+p.name],["Location",p.location||""],["Client",p.client||""],["Exported",todayISO()],[],
+  const sumAOA=[[projCompany(p).name],[(scope==="quote"?"QUOTATION SUMMARY — ":scope==="rap"?"RAP SUMMARY (INTERNAL) — ":"PROJECT SUMMARY — ")+p.name],["Location",p.location||""],["Client",p.client||""],["Exported",todayISO()],[],
     ["Type","No","Number","Title","Date","Subtotal","Discount","PPN 11%","Grand Total"]];
   const push=(list,label)=>list.forEach((q,i)=>sumAOA.push([label,i+1,q.quoteNumber||"",q.title||"",q.date||"",quoteSubtotal(q),-quoteDiscount(q)||0,quoteTax(q),quoteGrand(q)]));
   push(quotes,"Quotation"); push(raps,"RAP");
