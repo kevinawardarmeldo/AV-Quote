@@ -166,7 +166,8 @@ table.grid tr.rowlink:hover td{background:#F5F8F5}
   .p-sign .sco{color:#111;font-size:10.5px;font-weight:600;margin-top:1px}
   .num-p{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
   tr{page-break-inside:avoid}
-  @page{margin:16mm 14mm}
+  @page{margin:0}
+  .p-doc{padding:16mm 14mm}
 }
 </style>
 </head>
@@ -1339,6 +1340,16 @@ function pickItem(eid){
   render(); // re-render page behind modal
 }
 
+/* ---------- print helper: clean title/filename, no browser header text ---------- */
+function doPrint(fname){
+  const prev=document.title;
+  document.title=(fname||"document").replace(/[\\/:*?"<>|]/g,"-");
+  const restore=()=>{ document.title=prev; window.removeEventListener("afterprint",restore); };
+  window.addEventListener("afterprint",restore);
+  window.print();
+  setTimeout(restore,2000);
+}
+
 /* ================= modal helpers ================= */
 function openModal(title,body,foot,wide){
   $("#modalTitle").textContent=title; $("#modalBody").innerHTML=body; $("#modalFoot").innerHTML=foot||"";
@@ -1416,7 +1427,7 @@ function printQuote(qid){
     ${q.notes.trim()?`<div class="p-notes"><h4>Notes & Terms</h4><div>${esc(q.notes)}</div></div>`:""}
     ${isPO?poSignHTML(p,q):signBlockHTML(p,isInv?"Received by":"Approved by",isRap?"Management":isInv?"":(p.client||""))}
   </div>`;
-  window.print();
+  doPrint((q.quoteNumber||q.title||KIND_LABEL[q.kind||"quote"])+" - "+p.name);
 }
 function poSignHTML(p,q){
   const S=(p&&p.sig)||{};
@@ -1450,7 +1461,7 @@ function printReceipt(qid){
         <div style="font-size:10.5px;font-weight:600">${esc(C.name)}</div></div>
     </div>
   </div>`;
-  window.print();
+  doPrint((q.quoteNumber||q.title||"Receipt")+" - "+p.name);
 }
 function printSummary(pid,scope){
   scope=scope||"all";
@@ -1490,7 +1501,7 @@ function printSummary(pid,scope){
     ${(p.summaryNotes||"").trim()?`<div class="p-notes"><h4>Notes & Terms</h4><div>${esc(p.summaryNotes)}</div></div>`:""}
     ${signBlockHTML(p,"Approved by",scope==="rap"?"Management":(p.client||""))}
   </div>`;
-  window.print();
+  doPrint(p.name+(scope==="quote"?" - quotation summary":scope==="rap"?" - RAP summary":" - project summary"));
 }
 
 /* ================= Excel export (SheetJS) ================= */
