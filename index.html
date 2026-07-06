@@ -440,15 +440,15 @@ const PERMS={
   equipment:["admin","purchasing"], distributors:["admin","purchasing"],
   templates:["admin","adminproject"], companies:["admin"], users:["admin"],
   quote:["admin","engineer","adminproject"], rap:["admin","adminproject","purchasing"],
-  billing:["admin","finance"], po:["admin","purchasing"], manage:["admin","adminproject"]
+  billing:["admin","finance"], po:["admin","purchasing"], sj:["admin","adminproject","purchasing"], manage:["admin","adminproject"]
 };
 const isAdmin=()=>!!CURRENT_USER?.roles?.includes("admin");
 const can=k=>!CURRENT_USER||(PERMS[k]||[]).some(r=>CURRENT_USER.roles.includes(r));
 const allowedCompanyIds=()=>isAdmin()?DB.companies.map(c=>c.id):(CURRENT_USER?.companies||[]);
 const canSeeProject=p=>allowedCompanyIds().includes(p.companyId||DB.companies[0]?.id);
-const docPerm=k=>({quote:"quote",rap:"rap",invoice:"billing",receipt:"billing",po:"po"}[k||"quote"]);
+const docPerm=k=>({quote:"quote",rap:"rap",invoice:"billing",receipt:"billing",po:"po",sj:"sj"}[k||"quote"]);
 const getDistributor=name=>DB.distributors.find(d=>d.name.trim().toLowerCase()===String(name||"").trim().toLowerCase());
-const KIND_LABEL={quote:"Quotation",rap:"RAP",invoice:"Invoice",receipt:"Receipt",po:"Purchase Order"};
+const KIND_LABEL={quote:"Quotation",rap:"RAP",invoice:"Invoice",receipt:"Receipt",po:"Purchase Order",sj:"Surat Jalan"};
 function terbilang(n){
   n=Math.floor(Math.abs(Number(n)||0));
   const a=["","satu","dua","tiga","empat","lima","enam","tujuh","delapan","sembilan","sepuluh","sebelas"];
@@ -857,8 +857,8 @@ function renderProject(v,p){
   if(!p){ go({view:"home"}); return; }
   if(!canSeeProject(p)){ toast("You don't have access to this company's projects"); go({view:"home"}); return; }
   const co=projCompany(p);
-  const tabsAllowed={docs:can("quote")||can("rap"),billing:can("billing"),po:can("po")};
-  if(!tabsAllowed[route.ptab]) route.ptab=tabsAllowed.docs?"docs":tabsAllowed.billing?"billing":"po";
+  const tabsAllowed={docs:can("quote")||can("rap"),billing:can("billing"),po:can("po"),sj:can("sj")};
+  if(!tabsAllowed[route.ptab]) route.ptab=tabsAllowed.docs?"docs":tabsAllowed.billing?"billing":tabsAllowed.po?"po":"sj";
   const ptab=route.ptab;
   v.innerHTML=`
     <div class="page-head">
@@ -876,21 +876,37 @@ function renderProject(v,p){
       ${tabsAllowed.docs?`<button class="tab ${ptab==="docs"?"active":""}" onclick="route.ptab='docs';render()">${can("quote")&&can("rap")?"Quotations & RAP":can("quote")?"Quotations":"RAP"}</button>`:""}
       ${tabsAllowed.billing?`<button class="tab ${ptab==="billing"?"active":""}" onclick="route.ptab='billing';render()">Invoices & Receipts</button>`:""}
       ${tabsAllowed.po?`<button class="tab ${ptab==="po"?"active":""}" onclick="route.ptab='po';render()">Purchase Orders</button>`:""}
+      ${tabsAllowed.sj?`<button class="tab ${ptab==="sj"?"active":""}" onclick="route.ptab='sj';render()">Surat Jalan</button>`:""}
     </div>
     <div id="ptabBody"></div>`;
   const b=$("#ptabBody");
   if(ptab==="docs") renderProjectDocs(b,p);
   else if(ptab==="billing") renderProjectBilling(b,p);
+  else if(ptab==="sj") renderProjectSJ(b,p);
   else renderProjectPO(b,p);
 }
 function docRowActions(q,kind){
   return `${kind==="quote"&&can("rap")?`<button class="btn ghost small" title="Create RAP from this quotation" onclick="event.stopPropagation();deriveRAP('${q.id}')">→ RAP</button>`:""}
     ${kind==="rap"&&can("po")?`<button class="btn ghost small" title="Create a purchase order from selected items" onclick="event.stopPropagation();openPOFromRAP('${q.id}')">→ PO</button>`:""}
     ${kind==="invoice"&&can("billing")?`<button class="btn ghost small" title="Create receipt for this invoice" onclick="event.stopPropagation();receiptFromInvoice('${q.id}')">→ Receipt</button>`:""}
+    ${kind==="quote"&&can("sj")?`<button class="btn ghost small" title="Create surat jalan (delivery note) from this quotation" onclick="event.stopPropagation();openSJFromQuote('${q.id}')">→ SJ</button>`:""}
     <button class="btn ghost small" onclick="event.stopPropagation();duplicateQuote('${q.id}')">Duplicate</button>
     <button class="btn ghost small danger" onclick="event.stopPropagation();deleteQuote('${q.id}')">Delete</button>`;
 }
 function docTable(list,kind,emptyMsg){
+  if(kind==="sj") return `<div class="card" style="margin-bottom:22px"><table class="grid">
+    <thead><tr><th>SJ no.</th><th>Title</th><th>Date</th><th>Ref. quotation</th><th>Deliver to</th><th class="t-right">Items</th><th></th></tr></thead>
+    <tbody>${list.length?list.map(q=>`
+      <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
+        <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
+        <td>${esc(q.title||"Untitled")}</td>
+        <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
+        <td style="font-size:12.5px">${esc(q.extra?.refQuote||"—")}</td>
+        <td style="font-size:12.5px;color:var(--muted)">${esc(q.extra?.shipTo||"—")}</td>
+        <td class="t-right num">${q.sections.reduce((a,s)=>a+s.items.length,0)}</td>
+        <td class="t-right" style="white-space:nowrap">${docRowActions(q,kind)}</td>
+      </tr>`).join(""):`<tr><td colspan="7"><div class="empty">${emptyMsg}</div></td></tr>`}
+    </tbody></table></div>`;
   return `<div class="card" style="margin-bottom:22px"><table class="grid">
     <thead><tr><th>${KIND_LABEL[kind]} no.</th><th>Title</th><th>Date</th>${kind==="po"?"<th>Distributor</th>":""}${kind!=="receipt"?'<th>PPN 11%</th><th class="t-right">Subtotal</th><th class="t-right">Discount</th>':"<th>Received from</th>"}<th class="t-right">${kind==="receipt"?"Amount":"Grand total"}</th><th></th></tr></thead>
     <tbody>${list.length?list.map(q=>`
@@ -1016,6 +1032,80 @@ function renderProjectPO(b,p){
     ${docTable(pos,"po","Create a PO from RAP items (recommended) — pick the lines to order and the distributor — or start blank.")}
     ${pos.length?`<div class="card card-pad" style="max-width:460px"><div class="totals" style="max-width:none">
       <div class="line grand"><span>Total purchasing</span><span class="num">${fmtRp(total)}</span></div></div></div>`:""}`;
+}
+
+function renderProjectSJ(b,p){
+  const sjs=kindQuotes(p.id,"sj");
+  b.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="eyebrow">Surat jalan / delivery notes to site</span>
+      <button class="btn primary small" onclick="pickQuoteForSJ('${p.id}')">+ SJ from quotation</button>
+    </div>
+    ${docTable(sjs,"sj","Create a surat jalan from a quotation — pick the items and quantities being sent. Multiple SJ per quotation are supported for staged deliveries.")}`;
+}
+function pickQuoteForSJ(pid){
+  const quotes=kindQuotes(pid,"quote");
+  if(!quotes.length) return alert("No quotations in this project — the surat jalan picks goods from a quotation.");
+  if(quotes.length===1) return openSJFromQuote(quotes[0].id);
+  openModal("Create surat jalan — choose source quotation",`
+    <div class="field"><label>Quotation to deliver from</label>
+      <select id="sj_src">${quotes.map(x=>`<option value="${x.id}">${esc(x.quoteNumber||x.title)}</option>`).join("")}</select></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="openSJFromQuote($('#sj_src').value)">Next — pick items</button>`);
+}
+const itemKey=it=>(String(it.brand)+"|"+String(it.series)+"|"+String(it.description)).toLowerCase().trim();
+function deliveredMap(quoteId){
+  const m={};
+  DB.quotations.filter(x=>x.kind==="sj"&&x.extra?.refQuoteId===quoteId).forEach(sj=>
+    sj.sections.forEach(sec=>sec.items.forEach(it=>{ m[itemKey(it)]=(m[itemKey(it)]||0)+(Number(it.qty)||0); })));
+  return m;
+}
+function openSJFromQuote(quoteId){
+  const src=getQuote(quoteId), sent=deliveredMap(quoteId);
+  let rows="";
+  src.sections.forEach((sec,si)=>{
+    rows+=`<tr style="background:#F3F6F3"><td colspan="5" style="font-weight:700;font-size:12px">${esc(sec.name).toUpperCase()}</td></tr>`;
+    sec.items.forEach((it,ii)=>{
+      const done=sent[itemKey(it)]||0, remain=Math.max(0,(Number(it.qty)||0)-done);
+      rows+=`<tr>
+        <td><input type="checkbox" class="sjitem" data-si="${si}" data-ii="${ii}" ${remain>0?"checked":""}></td>
+        <td style="font-weight:600;white-space:nowrap">${esc(it.brand)} ${esc(it.series)}</td>
+        <td style="font-size:12px;color:var(--muted)">${esc(it.description)}</td>
+        <td class="num" style="white-space:nowrap;font-size:12px">${done?`sent ${fmtN(done)} of ${fmtN(it.qty)}`:`of ${fmtN(it.qty)} ${esc(it.unit)}`}
+          ${done>=(Number(it.qty)||0)&&it.qty?'<span class="pill">complete</span>':""}</td>
+        <td><input type="number" min="0" step="any" class="sjqty" data-si="${si}" data-ii="${ii}" value="${remain}"
+          style="width:80px;border:1px solid var(--line);border-radius:6px;padding:4px 8px;text-align:right;font-family:var(--mono)"></td></tr>`;
+    });
+  });
+  openModal("Surat jalan — items from “"+esc(src.quoteNumber||src.title)+"”",`
+    <div class="field"><label>Deliver to (site address)</label><input id="sj_shipto" value="${esc(getProject(src.projectId)?.location||"")}" placeholder="site / warehouse address"></div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Quantities default to what hasn't been delivered yet (based on previous surat jalan of this quotation). Adjust for partial shipments — you can create as many SJ as there are deliveries.</p>
+    <div style="max-height:44vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px">
+      <table class="grid"><tbody>${rows}</tbody></table></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="doSJFromQuote('${quoteId}')">Create surat jalan</button>`,true);
+}
+async function doSJFromQuote(quoteId){
+  const src=getQuote(quoteId);
+  const qtyOf=(si,ii)=>Number(document.querySelector(`.sjqty[data-si="${si}"][data-ii="${ii}"]`)?.value)||0;
+  const picked=[...document.querySelectorAll(".sjitem:checked")].map(c=>({si:+c.dataset.si,ii:+c.dataset.ii})).filter(x=>qtyOf(x.si,x.ii)>0);
+  if(!picked.length) return alert("Select at least one item with a quantity above zero.");
+  const sections=[];
+  src.sections.forEach((sec,si)=>{
+    const items=sec.items.map((it,ii)=>({it,ii})).filter(x=>picked.some(k=>k.si===si&&k.ii===x.ii))
+      .map(x=>({...JSON.parse(JSON.stringify(x.it)),qty:qtyOf(si,x.ii)}));
+    if(items.length) sections.push({name:sec.name,items});
+  });
+  const shipTo=$("#sj_shipto").value.trim();
+  closeModal();
+  const n=kindQuotes(src.projectId,"sj").length+1;
+  const q={id:uid(),projectId:src.projectId,quoteNumber:"",title:"Surat Jalan "+n+" — "+(src.quoteNumber||src.title),
+    date:todayISO(),tax:false,kind:"sj",discount:{type:"percent",value:0},sections,notes:"",
+    extra:{refQuote:src.quoteNumber||src.title,refQuoteId:src.id,shipTo,vehicle:"",driver:""}};
+  DB.quotations.push(q);
+  route.ptab="sj";
+  await persist(saveQuotes,"Surat jalan created — "+picked.length+" item(s)");
+  go({view:"quote",quoteId:q.id});
 }
 
 /* ---------- document creation flows ---------- */
@@ -1181,11 +1271,11 @@ function renderQuote(v,q,p){
     <div class="page-head">
       <div>
         <button class="btn ghost small" onclick="go({view:'project',projectId:'${p.id}'})" style="margin-bottom:8px;padding-left:0">← ${esc(p.name)}</button>
-        <span class="eyebrow" ${q.kind==="rap"?'style="color:var(--amber)"':""}>${q.kind==="rap"?"RAP / Budget estimation (internal)":q.kind==="invoice"?"Invoice":q.kind==="po"?"Purchase order":"Quotation"} · ${esc(projCompany(p).name)}</span>
+        <span class="eyebrow" ${q.kind==="rap"?'style="color:var(--amber)"':""}>${q.kind==="rap"?"RAP / Budget estimation (internal)":q.kind==="invoice"?"Invoice":q.kind==="po"?"Purchase order":q.kind==="sj"?"Surat jalan / delivery note":"Quotation"} · ${esc(projCompany(p).name)}</span>
         <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(480px,80vw)" value="${esc(q.title)}" placeholder="Quotation title / option name" onchange="qSet('${q.id}','title',this.value)"></h1>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" onclick="exportQuoteXlsx('${q.id}')">⤓ Excel</button>
+        ${q.kind!=="sj"?`<button class="btn" onclick="exportQuoteXlsx('${q.id}')">⤓ Excel</button>`:""}
         <button class="btn" onclick="printQuote('${q.id}')">⤓ PDF</button>
         <button class="btn primary" onclick="persist(saveQuotes)">Save</button>
       </div>
@@ -1195,17 +1285,24 @@ function renderQuote(v,q,p){
       <div class="field-row c3">
         <div class="field"><label>${KIND_LABEL[q.kind||"quote"]} number (manual)</label><input value="${esc(q.quoteNumber)}" placeholder="e.g. Q/SAM/2026/07-014" onchange="qSet('${q.id}','quoteNumber',this.value)"></div>
         <div class="field"><label>Date</label><input type="date" value="${esc(q.date)}" onchange="qSet('${q.id}','date',this.value)"></div>
-        <div class="field"><label>Tax</label>
+        ${q.kind!=="sj"?`<div class="field"><label>Tax</label>
           <select onchange="qSet('${q.id}','tax',this.value==='1')">
             <option value="1" ${q.tax?"selected":""}>Add PPN 11%</option>
             <option value="0" ${q.tax?"":"selected"}>No tax (exclude PPN)</option>
-          </select></div>
+          </select></div>`:""}
       </div>
       ${q.kind==="invoice"?`
       <div class="field-row c2">
         <div class="field"><label>Bill to (client)</label><input value="${esc(q.extra?.billTo||p.client||"")}" placeholder="defaults to project client" onchange="exSet('${q.id}','billTo',this.value)"></div>
         <div class="field"><label>&nbsp;</label><button class="btn" onclick="openInvoiceImport('${q.id}')">⇐ Import from quotation (full / % down payment)</button></div>
       </div>`:""}
+      ${q.kind==="sj"?`
+      <div class="field-row c3">
+        <div class="field"><label>Deliver to (site address)</label><input value="${esc(q.extra?.shipTo||"")}" onchange="exSet('${q.id}','shipTo',this.value)"></div>
+        <div class="field"><label>Vehicle (no. polisi)</label><input value="${esc(q.extra?.vehicle||"")}" placeholder="e.g. B 1234 XYZ" onchange="exSet('${q.id}','vehicle',this.value)"></div>
+        <div class="field"><label>Driver</label><input value="${esc(q.extra?.driver||"")}" onchange="exSet('${q.id}','driver',this.value)"></div>
+      </div>
+      <div class="sub" style="font-size:12px;color:var(--muted);margin-bottom:8px">Ref. quotation: <strong>${esc(q.extra?.refQuote||"—")}</strong> · prices are never shown on a surat jalan.</div>`:""}
       ${q.kind==="po"?`
       <div class="field-row c2">
         <div class="field"><label>Distributor / store (PO recipient)</label>
@@ -1221,7 +1318,7 @@ function renderQuote(v,q,p){
     <div id="sections">${q.sections.map((s,si)=>sectionHTML(q,s,si)).join("")}</div>
     <button class="btn dark" onclick="addSection('${q.id}')">+ Add section</button>
 
-    <div class="card card-pad" style="margin-top:24px">
+    ${q.kind!=="sj"?`<div class="card card-pad" style="margin-top:24px">
       <div class="totals">
         <div class="line"><span>Subtotal</span><span class="num">${fmtRp(quoteSubtotal(q))}</span></div>
         <div class="line" style="align-items:center">
@@ -1238,7 +1335,7 @@ function renderQuote(v,q,p){
         <div class="line"><span>PPN 11% ${q.tax?"":"(not applied)"}${quoteDiscount(q)&&q.tax?" · after discount":""}</span><span class="num">${fmtRp(quoteTax(q))}</span></div>
         <div class="line grand"><span>Grand total</span><span class="num">${fmtRp(quoteGrand(q))}</span></div>
       </div>
-    </div>
+    </div>`:""}
 
     <div class="card card-pad" style="margin-top:22px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
@@ -1258,6 +1355,7 @@ function renderQuote(v,q,p){
     </div>`;
 }
 function sectionHTML(q,s,si){
+  const sj=q.kind==="sj";
   return `<div class="section-block">
     <div class="section-head">
       <input value="${esc(s.name)}" placeholder="Section name (e.g. AV Control Room)" onchange="renameSection('${q.id}',${si},this.value)">
@@ -1267,7 +1365,7 @@ function sectionHTML(q,s,si){
     </div>
     <div class="section-body">
       <table class="grid boq-table">
-        <thead><tr><th style="width:26px">#</th><th style="width:120px">Brand</th><th style="width:140px">Series / Type</th><th>Description</th><th style="width:64px" class="t-right">Qty</th><th style="width:70px">Unit</th><th style="width:120px" class="t-right">Price</th><th style="width:120px" class="t-right">Total</th><th style="width:96px"></th></tr></thead>
+        <thead><tr><th style="width:26px">#</th><th style="width:120px">Brand</th><th style="width:140px">Series / Type</th><th>Description</th><th style="width:64px" class="t-right">Qty</th><th style="width:70px">Unit</th>${sj?"":'<th style="width:120px" class="t-right">Price</th><th style="width:120px" class="t-right">Total</th>'}<th style="width:96px"></th></tr></thead>
         <tbody>
         ${s.items.map((it,ii)=>`
           <tr>
@@ -1277,22 +1375,22 @@ function sectionHTML(q,s,si){
             <td><input class="inline-input" value="${esc(it.description)}" onchange="itemSet('${q.id}',${si},${ii},'description',this.value)"></td>
             <td><input class="inline-input num" type="number" min="0" step="any" value="${it.qty}" onchange="itemSet('${q.id}',${si},${ii},'qty',Number(this.value)||0)"></td>
             <td><input class="inline-input" value="${esc(it.unit)}" onchange="itemSet('${q.id}',${si},${ii},'unit',this.value)"></td>
-            <td><input class="inline-input num" type="number" min="0" value="${it.price}" onchange="itemSet('${q.id}',${si},${ii},'price',Number(this.value)||0)"></td>
-            <td class="t-right num" style="font-weight:600;padding-right:10px">${fmtRp(lineTotal(it))}</td>
+            ${sj?"":`<td><input class="inline-input num" type="number" min="0" value="${it.price}" onchange="itemSet('${q.id}',${si},${ii},'price',Number(this.value)||0)"></td>
+            <td class="t-right num" style="font-weight:600;padding-right:10px">${fmtRp(lineTotal(it))}</td>`}
             <td class="rowtools">
               <button onclick="moveItem('${q.id}',${si},${ii},-1)" title="Move up">↑</button>
               <button onclick="moveItem('${q.id}',${si},${ii},1)" title="Move down">↓</button>
               <button class="del" onclick="removeItem('${q.id}',${si},${ii})" title="Remove">✕</button>
             </td>
           </tr>`).join("")}
-        ${s.items.length?"":`<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:16px">Empty section — add items below.</td></tr>`}
+        ${s.items.length?"":`<tr><td colspan="${sj?7:9}" style="text-align:center;color:var(--muted);padding:16px">Empty section — add items below.</td></tr>`}
         </tbody>
       </table>
       <div class="addrow-bar">
         <button class="btn small" onclick="openPicker('${q.id}',${si})">+ From database</button>
         <button class="btn small" onclick="addManualItem('${q.id}',${si})">+ Manual line</button>
       </div>
-      <div class="section-sub"><span>Section total</span><span class="num">${fmtRp(sectionTotal(s))}</span></div>
+      ${sj?"":`<div class="section-sub"><span>Section total</span><span class="num">${fmtRp(sectionTotal(s))}</span></div>`}
     </div>
   </div>`;
 }
@@ -1502,7 +1600,8 @@ function printQuote(qid){
     });
     rows+=`<tr class="subtotal"><td colspan="7" style="text-align:right">Subtotal — ${esc(s.name)}</td><td class="num-p" style="text-align:right">${fmtRp(sectionTotal(s))}</td></tr>`;
   });
-  const isRap=q.kind==="rap", isInv=q.kind==="invoice", isPO=q.kind==="po";
+  const isRap=q.kind==="rap", isInv=q.kind==="invoice", isPO=q.kind==="po", isSJ=q.kind==="sj";
+  if(isSJ) return printSJ(q,p);
   const title=isRap?"PROJECT BUDGET (RAP)":isInv?"INVOICE":isPO?"PURCHASE ORDER":"QUOTATION";
   const dist=isPO?getDistributor(q.extra?.distributor):null;
   const meta=[["Project",p.name],["Location",p.location||"—"],
@@ -1533,6 +1632,43 @@ function printQuote(qid){
     ${isPO?poSignHTML(p,q):signBlockHTML(p,isInv?"Received by":"Approved by",isRap?"Management":isInv?"":(p.client||""))}
   </div>`;
   doPrint((q.quoteNumber||q.title||KIND_LABEL[q.kind||"quote"])+" - "+p.name);
+}
+function printSJ(q,p){
+  const x=q.extra||{}, S=(p&&p.sig)||{};
+  const blank='(&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;)';
+  let rows="", no=0;
+  q.sections.forEach(sec=>{
+    rows+=`<tr class="sec"><td colspan="7">${esc(sec.name).toUpperCase()}</td></tr>`;
+    sec.items.forEach(it=>{ no++;
+      rows+=`<tr><td class="num-p">${no}</td><td>${esc(it.brand)}</td><td>${esc(it.series)}</td><td>${esc(it.description)}</td>
+        <td class="num-p" style="text-align:right">${fmtN(it.qty)}</td><td>${esc(it.unit)}</td><td></td></tr>`;
+    });
+  });
+  const meta=[["Project",p.name],["Ref. quotation",x.refQuote||"—"],["SJ no.",q.quoteNumber||"—"],
+    ["Date",fmtDate(q.date)],["Deliver to",x.shipTo||p.location||"—"]];
+  if(x.vehicle) meta.push(["Vehicle",x.vehicle]);
+  if(x.driver) meta.push(["Driver",x.driver]);
+  $("#printArea").innerHTML=`<div class="p-doc">
+    ${docHeaderHTML("SURAT JALAN / DELIVERY NOTE",p,meta)}
+    <table class="p-table">
+      <thead><tr><th style="width:24px">No</th><th style="width:90px">Brand</th><th style="width:115px">Series / Type</th><th>Description</th><th style="width:48px;text-align:right">Qty</th><th style="width:48px">Unit</th><th style="width:90px">Checked ✓</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="font-size:10px;color:#444;margin-top:6px">Barang telah diterima dalam keadaan baik dan lengkap sesuai daftar di atas. / Goods received in good condition and complete as listed above.</div>
+    ${q.notes.trim()?`<div class="p-notes"><h4>Notes</h4><div>${esc(q.notes)}</div></div>`:""}
+    <div class="p-sign">
+      <div class="box">Dikirim oleh / Delivered by,<div class="line"></div>
+        <div class="sname">${S.prepName?"( "+esc(S.prepName)+" )":blank}</div>
+        <div class="sco">${esc(projCompany(p).name)}</div></div>
+      <div class="box">Pengemudi / Driver,<div class="line"></div>
+        <div class="sname">${x.driver?"( "+esc(x.driver)+" )":blank}</div>
+        ${x.vehicle?`<div class="sco">${esc(x.vehicle)}</div>`:""}</div>
+      <div class="box">Diterima oleh / Received by,<div class="line"></div>
+        <div class="sname">${blank}</div>
+        <div class="sco">${esc(p.client||"")}</div></div>
+    </div>
+  </div>`;
+  doPrint((q.quoteNumber||q.title||"Surat Jalan")+" - "+p.name);
 }
 function poSignHTML(p,q){
   const S=(p&&p.sig)||{};
