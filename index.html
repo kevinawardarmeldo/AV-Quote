@@ -1079,6 +1079,7 @@ function openSJFromQuote(quoteId){
   });
   openModal("Surat jalan — items from “"+esc(src.quoteNumber||src.title)+"”",`
     <div class="field"><label>Deliver to (site address)</label><input id="sj_shipto" value="${esc(getProject(src.projectId)?.location||"")}" placeholder="site / warehouse address"></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:8px"><input type="checkbox" id="sj_merge"> Merge all sections into one list (no section headers on the surat jalan)</label>
     <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Quantities default to what hasn't been delivered yet (based on previous surat jalan of this quotation). Adjust for partial shipments — you can create as many SJ as there are deliveries.</p>
     <div style="max-height:44vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px">
       <table class="grid"><tbody>${rows}</tbody></table></div>`,
@@ -1097,7 +1098,10 @@ async function doSJFromQuote(quoteId){
     if(items.length) sections.push({name:sec.name,items});
   });
   const shipTo=$("#sj_shipto").value.trim();
+  const merge=$("#sj_merge")?.checked;
   closeModal();
+  if(merge&&sections.length>1){ sections.splice(0,sections.length,{name:"Delivered Items",items:sections.flatMap(x=>x.items)}); }
+  else if(merge&&sections.length===1){ sections[0].name="Delivered Items"; }
   const n=kindQuotes(src.projectId,"sj").length+1;
   const q={id:uid(),projectId:src.projectId,quoteNumber:"",title:"Surat Jalan "+n+" — "+(src.quoteNumber||src.title),
     date:todayISO(),tax:false,kind:"sj",discount:{type:"percent",value:0},sections,notes:"",
@@ -1154,6 +1158,7 @@ function openPOFromRAP(rapId){
         ${DB.distributors.map(d=>`<option value="${esc(d.name)}">${esc(d.name)}</option>`).join("")}
       </select>
       <span style="font-size:11.5px;color:var(--muted)">Tip: the last column shows each item's distributor from the equipment database. Create one PO per distributor.</span></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:8px"><input type="checkbox" id="po_merge"> Merge all sections into one list (no section headers on the PO)</label>
     <div style="max-height:44vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px">
       <table class="grid"><tbody>${rows}</tbody></table></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
@@ -1169,7 +1174,9 @@ async function doPOFromRAP(rapId){
     const items=sec.items.filter((_,ii)=>picked.some(x=>x.si===si&&x.ii===ii)).map(it=>JSON.parse(JSON.stringify(it)));
     if(items.length) sections.push({name:sec.name,items});
   });
+  const merge=$("#po_merge")?.checked;
   closeModal();
+  if(merge&&sections.length){ sections.splice(0,sections.length,{name:"Order Items",items:sections.flatMap(x=>x.items)}); }
   const q={id:uid(),projectId:rap.projectId,quoteNumber:"",title:"PO — "+(dist||"order")+" ("+(rap.quoteNumber||rap.title)+")",
     date:todayISO(),tax:true,kind:"po",discount:{type:"percent",value:0},sections,notes:"",
     extra:{distributor:dist,shipTo:"",refRAP:rap.quoteNumber||rap.title}};
@@ -1317,6 +1324,7 @@ function renderQuote(v,q,p){
 
     <div id="sections">${q.sections.map((s,si)=>sectionHTML(q,s,si)).join("")}</div>
     <button class="btn dark" onclick="addSection('${q.id}')">+ Add section</button>
+    ${(["sj","po"].includes(q.kind)&&q.sections.length>1)?`<button class="btn" style="margin-left:8px" onclick="mergeSections('${q.id}')">⇆ Merge all sections</button>`:""}
 
     ${q.kind!=="sj"?`<div class="card card-pad" style="margin-top:24px">
       <div class="totals">
@@ -1400,6 +1408,14 @@ function qSetSilent(id,k,v){ getQuote(id)[k]=v; setDirty(true); }
 function exSet(id,k,v){ const q=getQuote(id); q.extra=q.extra||{}; q.extra[k]=v; setDirty(true); }
 function setDiscount(id,k,v){ const q=getQuote(id); q.discount=q.discount||{type:"percent",value:0}; q.discount[k]=v; setDirty(true); render(); }
 function addSection(id){ getQuote(id).sections.push({name:"New Section",items:[]}); setDirty(true); render(); }
+function mergeSections(id){
+  const q=getQuote(id);
+  if(q.sections.length<2) return;
+  if(!confirm("Merge all "+q.sections.length+" sections into one? Item order is kept; section headers are removed.")) return;
+  const name=q.kind==="po"?"Order Items":"Delivered Items";
+  q.sections=[{name,items:q.sections.flatMap(x=>x.items)}];
+  setDirty(true); render(); toast("Sections merged — rename the section if you like");
+}
 function renameSection(id,si,v){ getQuote(id).sections[si].name=v; setDirty(true); }
 function removeSection(id,si){ const q=getQuote(id); if(q.sections[si].items.length&&!confirm("Delete this section and its "+q.sections[si].items.length+" line(s)?"))return; q.sections.splice(si,1); setDirty(true); render(); }
 function moveSection(id,si,d){ const q=getQuote(id),j=si+d; if(j<0||j>=q.sections.length)return; [q.sections[si],q.sections[j]]=[q.sections[j],q.sections[si]]; setDirty(true); render(); }
