@@ -1638,7 +1638,7 @@ function printQuote(qid){
     <table class="p-tot"><tbody>
       <tr><td>Subtotal</td><td class="num-p" style="text-align:right">${fmtRp(quoteSubtotal(q))}</td></tr>
       ${quoteDiscount(q)>0?`<tr><td>${discLabel(q)}</td><td class="num-p" style="text-align:right">− ${fmtRp(quoteDiscount(q))}</td></tr>`:""}
-      <tr><td>PPN 11%${q.tax?"":" (excluded)"}</td><td class="num-p" style="text-align:right">${q.tax?fmtRp(quoteTax(q)):"—"}</td></tr>
+      ${q.tax?`<tr><td>PPN 11%</td><td class="num-p" style="text-align:right">${fmtRp(quoteTax(q))}</td></tr>`:""}
       <tr class="g"><td>GRAND TOTAL</td><td class="num-p" style="text-align:right">${fmtRp(quoteGrand(q))}</td></tr>
     </tbody></table>
     ${isInv?`<div style="margin-top:10px;font-size:11px"><em>Terbilang: <strong style="text-transform:capitalize">${esc(terbilang(quoteGrand(q)))}</strong></em></div>`:""}
@@ -1784,7 +1784,7 @@ function quoteAOA(q,p){
   aoa.push([]);
   aoa.push(["","","","","","","Subtotal",quoteSubtotal(q)]);
   if(quoteDiscount(q)>0) aoa.push(["","","","","","",discLabel(q),-quoteDiscount(q)]);
-  aoa.push(["","","","","","","PPN 11%"+(q.tax?"":" (excluded)"),quoteTax(q)]);
+  if(q.tax) aoa.push(["","","","","","","PPN 11%",quoteTax(q)]);
   aoa.push(["","","","","","","GRAND TOTAL",quoteGrand(q)]);
   if(q.notes.trim()){ aoa.push([]); aoa.push(["Notes & Terms"]); q.notes.split("\n").forEach(l=>aoa.push([l])); }
   return aoa;
