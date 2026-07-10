@@ -917,7 +917,7 @@ function docTable(list,kind,emptyMsg){
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
         <td>${esc(q.title||"Untitled")}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
-        <td style="font-size:12.5px">${esc([q.extra?.refQuote,q.extra?.spkNo].filter(Boolean).join(" · ")||"—")}</td>
+        <td style="font-size:12.5px">${esc([...bastRefList(q),q.extra?.spkNo].filter(Boolean).join(" · ")||"—")}</td>
         <td class="t-right" style="white-space:nowrap">${docRowActions(q,kind)}</td>
       </tr>`).join(""):`<tr><td colspan="5"><div class="empty">${emptyMsg}</div></td></tr>`}
     </tbody></table></div>`;
@@ -1243,7 +1243,7 @@ async function newBAST(pid){
   const quotes=kindQuotes(pid,"quote");
   const q={id:uid(),projectId:pid,quoteNumber:"",title:"BAST — "+p.name,date:todayISO(),tax:false,kind:"bast",
     discount:{type:"percent",value:0},sections:[],notes:"",
-    extra:{refQuote:quotes[0]?(quotes[0].quoteNumber||quotes[0].title):"",spkNo:"",scope:"",maintenance:""}};
+    extra:{refQuotes:quotes.map(x=>x.id),spkNo:"",scope:"",maintenance:"",appendix:[]}};
   DB.quotations.push(q);
   route.ptab="ba";
   await persist(saveQuotes,"BAST created");
@@ -1755,10 +1755,17 @@ function renderBAST(v,q,p){
         <div class="field"><label>BAST number (manual)</label><input value="${esc(q.quoteNumber)}" placeholder="e.g. BAST/SAM/2026/08-001" onchange="qSet('${q.id}','quoteNumber',this.value)"></div>
         <div class="field"><label>Handover date</label><input type="date" value="${esc(q.date)}" onchange="qSet('${q.id}','date',this.value)"></div>
       </div>
-      <div class="field-row c2">
-        <div class="field"><label>Ref. quotation / contract</label><input value="${esc(x.refQuote||"")}" onchange="exSet('${q.id}','refQuote',this.value)"></div>
-        <div class="field"><label>SPK / PO number (client's)</label><input value="${esc(x.spkNo||"")}" placeholder="optional" onchange="exSet('${q.id}','spkNo',this.value)"></div>
+      <div class="field"><label>Ref. quotations / contracts (tick all covered by this BAST)</label>
+        ${(()=>{const quotes=kindQuotes(p.id,"quote");
+          if(!quotes.length) return '<span style="font-size:12px;color:var(--muted)">No quotations in this project.</span>';
+          const sel=x.refQuotes||[];
+          return `<div style="display:grid;gap:6px">`+quotes.map(d=>`
+            <label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" ${sel.includes(d.id)?"checked":""} onchange="toggleBASTRef('${q.id}','${d.id}',this.checked)">
+              ${esc(d.quoteNumber||d.title)} <span style="color:var(--muted);font-size:12px">— ${fmtRp(quoteGrand(d))}</span></label>`).join("")+`</div>`;})()}
+        ${x.refQuote&&!(x.refQuotes||[]).length?`<span style="font-size:11.5px;color:var(--amber)">Legacy text reference will be printed until you tick quotations: “${esc(x.refQuote)}”</span>`:""}
       </div>
+      <div class="field"><label>SPK / PO number (client's)</label><input value="${esc(x.spkNo||"")}" placeholder="optional" onchange="exSet('${q.id}','spkNo',this.value)"></div>
       <div class="field"><label>Scope of work (lingkup pekerjaan)</label><textarea rows="3" placeholder="e.g. Pengadaan dan instalasi sistem tata suara Multifunction Room…" onchange="exSet('${q.id}','scope',this.value)">${esc(x.scope||"")}</textarea></div>
       <div class="field"><label>Maintenance / warranty period (masa pemeliharaan) — optional</label><input value="${esc(x.maintenance||"")}" placeholder="e.g. 90 hari kalender sejak tanggal serah terima" onchange="exSet('${q.id}','maintenance',this.value)"></div>
       <div class="field"><label>Appendices (lampiran) — tick documents to reference in the BAST text</label>
@@ -1774,6 +1781,18 @@ function renderBAST(v,q,p){
     </div>`;
 }
 
+function bastRefList(q){
+  const ids=q.extra?.refQuotes||[];
+  const names=ids.map(id=>getQuote(id)).filter(Boolean).map(d=>d.quoteNumber||d.title);
+  if(!names.length&&q.extra?.refQuote) names.push(q.extra.refQuote); // legacy single ref
+  return names;
+}
+function toggleBASTRef(qid,docId,on){
+  const q=getQuote(qid); q.extra=q.extra||{}; q.extra.refQuotes=q.extra.refQuotes||[];
+  if(on&&!q.extra.refQuotes.includes(docId)) q.extra.refQuotes.push(docId);
+  if(!on) q.extra.refQuotes=q.extra.refQuotes.filter(x=>x!==docId);
+  setDirty(true);
+}
 function toggleBASTAppendix(qid,docId,on){
   const q=getQuote(qid); q.extra=q.extra||{}; q.extra.appendix=q.extra.appendix||[];
   if(on&&!q.extra.appendix.includes(docId)) q.extra.appendix.push(docId);
@@ -2028,8 +2047,10 @@ function printBAP(qid){
 function printBAST(qid){
   const q=getQuote(qid), p=getProject(q.projectId), x=q.extra||{}, C=projCompany(p);
   if(dirty) persist(saveQuotes);
+  const refs=bastRefList(q);
+  const refText=refs.length>1?refs.slice(0,-1).join(", ")+" dan "+refs[refs.length-1]:(refs[0]||"");
   const meta=[["BAST no.",q.quoteNumber||"—"],["Date",fmtDate(q.date)],["Project",p.name],["Location",p.location||"—"]];
-  if(x.refQuote) meta.push(["Ref. quotation",x.refQuote]);
+  if(refs.length) meta.push([refs.length>1?"Ref. quotations":"Ref. quotation",refs.join(" · ")]);
   if(x.spkNo) meta.push(["SPK / PO no.",x.spkNo]);
   $("#printArea").innerHTML=`<div class="p-doc">
     ${docHeaderHTML("BERITA ACARA SERAH TERIMA",p,meta)}
@@ -2040,7 +2061,7 @@ function printBAST(qid){
     </table>
     <p style="font-size:11px;margin:8px 0">Dengan ini menyatakan bahwa PIHAK KEDUA telah menyelesaikan <strong>100%</strong> pekerjaan
       ${x.scope?": <strong>"+esc(x.scope)+"</strong>":"proyek <strong>"+esc(p.name)+"</strong>"}
-      ${x.refQuote||x.spkNo?" berdasarkan "+esc([x.refQuote,x.spkNo].filter(Boolean).join(" / ")):""},
+      ${refText||x.spkNo?" berdasarkan "+esc([refText,x.spkNo].filter(Boolean).join(" / ")):""},
       dan PIHAK PERTAMA telah menerima hasil pekerjaan tersebut dalam keadaan baik dan lengkap. /
       <em>The Second Party has completed 100% of the works and the First Party has received the results in good and complete condition.</em></p>
     ${x.maintenance?`<p style="font-size:11px;margin:6px 0">Masa pemeliharaan / maintenance period: <strong>${esc(x.maintenance)}</strong>.</p>`:""}
