@@ -1856,6 +1856,7 @@ function renderQuote(v,q,p){
 
     <div id="sections">${q.sections.map((s,si)=>sectionHTML(q,s,si)).join("")}</div>
     <button class="btn dark" onclick="addSection('${q.id}')">+ Add section</button>
+    ${["quote","rap","po"].includes(q.kind||"quote")?`<button class="btn" style="margin-left:8px" onclick="openPriceRefresh('${q.id}')">⟳ Update prices from database</button>`:""}
     ${(["sj","po"].includes(q.kind)&&q.sections.length>1)?`<button class="btn" style="margin-left:8px" onclick="mergeSections('${q.id}')">⇆ Merge all sections</button>`:""}
 
     ${!["sj","mos"].includes(q.kind)?`<div class="card card-pad" style="margin-top:24px">
@@ -2217,6 +2218,54 @@ function toggleBASTAppendix(qid,docId,on){
   if(on&&!q.extra.appendix.includes(docId)) q.extra.appendix.push(docId);
   if(!on) q.extra.appendix=q.extra.appendix.filter(x=>x!==docId);
   setDirty(true);
+}
+
+/* ---------- refresh BoQ prices from equipment database ---------- */
+function openPriceRefresh(qid){
+  const q=getQuote(qid);
+  const total=q.sections.reduce((a,s)=>a+s.items.length,0);
+  const empty=q.sections.reduce((a,s)=>a+s.items.filter(it=>!(Number(it.price)>0)).length,0);
+  const src=(q.kind==="rap"||q.kind==="po")?"budget price":"sell price";
+  openModal("Update prices from database",`
+    <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+      Lines are matched to the equipment database by <strong>brand + series/type</strong>, then the
+      <strong>${src}</strong> for ${esc(projCompany(getProject(q.projectId)).name)} is applied.
+      <strong>Quantity and unit are never changed.</strong>
+      This document has ${total} line(s), ${empty} without a price.</p>
+    <div class="field"><label>Which lines to update</label>
+      <select id="pr_scope">
+        <option value="empty" selected>Only lines without a price (Rp 0) — ${empty} line(s)</option>
+        <option value="all">All matching lines — overwrite existing prices too</option>
+      </select></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:4px">
+      <input type="checkbox" id="pr_desc"> Also update the description from the database</label>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="doPriceRefresh('${qid}')">Update prices</button>`);
+}
+function doPriceRefresh(qid){
+  const q=getQuote(qid);
+  const scope=$("#pr_scope").value, withDesc=$("#pr_desc").checked;
+  const cid=docCompanyId(q);
+  const useBudget=(q.kind==="rap"||q.kind==="po");
+  let updated=0, noMatch=0, noPrice=0, skipped=0;
+  q.sections.forEach(sec=>sec.items.forEach(it=>{
+    if(scope==="empty"&&Number(it.price)>0){ skipped++; return; }
+    const e=DB.equipment.find(x=>visibleTo(x,cid)
+      && x.brand.trim().toLowerCase()===String(it.brand).trim().toLowerCase()
+      && x.series.trim().toLowerCase()===String(it.series).trim().toLowerCase());
+    if(!e){ noMatch++; return; }
+    const p=useBudget?costOf(e,cid):priceOf(e,cid);
+    if(!(p>0)){ noPrice++; return; }
+    it.price=p;
+    if(withDesc&&e.description) it.description=e.description;
+    updated++;
+  }));
+  closeModal(); setDirty(true); render();
+  const parts=[updated+" updated"];
+  if(noMatch) parts.push(noMatch+" no DB match");
+  if(noPrice) parts.push(noPrice+" matched but no "+(useBudget?"budget":"sell")+" price yet");
+  if(skipped&&scope==="empty") parts.push(skipped+" kept (already priced)");
+  toast(parts.join(" · ")+" — press Save to keep");
 }
 
 /* ================= equipment picker ================= */
