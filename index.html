@@ -440,15 +440,16 @@ const PERMS={
   equipment:["admin","purchasing"], distributors:["admin","purchasing"],
   templates:["admin","adminproject"], companies:["admin"], users:["admin"],
   quote:["admin","engineer","adminproject"], rap:["admin","adminproject","purchasing"],
-  billing:["admin","finance"], po:["admin","purchasing"], sj:["admin","adminproject","purchasing"], manage:["admin","adminproject"]
+  billing:["admin","finance"], po:["admin","purchasing"], sj:["admin","adminproject","purchasing"], ba:["admin","adminproject"], manage:["admin","adminproject"]
 };
 const isAdmin=()=>!!CURRENT_USER?.roles?.includes("admin");
 const can=k=>!CURRENT_USER||(PERMS[k]||[]).some(r=>CURRENT_USER.roles.includes(r));
 const allowedCompanyIds=()=>isAdmin()?DB.companies.map(c=>c.id):(CURRENT_USER?.companies||[]);
 const canSeeProject=p=>allowedCompanyIds().includes(p.companyId||DB.companies[0]?.id);
-const docPerm=k=>({quote:"quote",rap:"rap",invoice:"billing",receipt:"billing",po:"po",sj:"sj"}[k||"quote"]);
+const docPerm=k=>({quote:"quote",rap:"rap",invoice:"billing",receipt:"billing",po:"po",sj:"sj",mos:"ba",bap:"ba",bast:"ba"}[k||"quote"]);
+const bapOverall=q=>{const sub=quoteSubtotal(q);return sub>0?q.sections.reduce((a,s)=>a+s.items.reduce((x,it)=>x+lineTotal(it)*(Number(it.prog)||0)/100,0),0)/sub*100:0;};
 const getDistributor=name=>DB.distributors.find(d=>d.name.trim().toLowerCase()===String(name||"").trim().toLowerCase());
-const KIND_LABEL={quote:"Quotation",rap:"RAP",invoice:"Invoice",receipt:"Receipt",po:"Purchase Order",sj:"Surat Jalan"};
+const KIND_LABEL={quote:"Quotation",rap:"RAP",invoice:"Invoice",receipt:"Receipt",po:"Purchase Order",sj:"Surat Jalan",mos:"Material on Site",bap:"BA Progress",bast:"BAST"};
 function terbilang(n){
   n=Math.floor(Math.abs(Number(n)||0));
   const a=["","satu","dua","tiga","empat","lima","enam","tujuh","delapan","sembilan","sepuluh","sebelas"];
@@ -857,8 +858,8 @@ function renderProject(v,p){
   if(!p){ go({view:"home"}); return; }
   if(!canSeeProject(p)){ toast("You don't have access to this company's projects"); go({view:"home"}); return; }
   const co=projCompany(p);
-  const tabsAllowed={docs:can("quote")||can("rap"),billing:can("billing"),po:can("po"),sj:can("sj")};
-  if(!tabsAllowed[route.ptab]) route.ptab=tabsAllowed.docs?"docs":tabsAllowed.billing?"billing":tabsAllowed.po?"po":"sj";
+  const tabsAllowed={docs:can("quote")||can("rap"),billing:can("billing"),po:can("po"),sj:can("sj"),ba:can("ba")};
+  if(!tabsAllowed[route.ptab]) route.ptab=tabsAllowed.docs?"docs":tabsAllowed.billing?"billing":tabsAllowed.po?"po":tabsAllowed.sj?"sj":"ba";
   const ptab=route.ptab;
   v.innerHTML=`
     <div class="page-head">
@@ -877,12 +878,14 @@ function renderProject(v,p){
       ${tabsAllowed.billing?`<button class="tab ${ptab==="billing"?"active":""}" onclick="route.ptab='billing';render()">Invoices & Receipts</button>`:""}
       ${tabsAllowed.po?`<button class="tab ${ptab==="po"?"active":""}" onclick="route.ptab='po';render()">Purchase Orders</button>`:""}
       ${tabsAllowed.sj?`<button class="tab ${ptab==="sj"?"active":""}" onclick="route.ptab='sj';render()">Surat Jalan</button>`:""}
+      ${tabsAllowed.ba?`<button class="tab ${ptab==="ba"?"active":""}" onclick="route.ptab='ba';render()">BA & Handover</button>`:""}
     </div>
     <div id="ptabBody"></div>`;
   const b=$("#ptabBody");
   if(ptab==="docs") renderProjectDocs(b,p);
   else if(ptab==="billing") renderProjectBilling(b,p);
   else if(ptab==="sj") renderProjectSJ(b,p);
+  else if(ptab==="ba") renderProjectBA(b,p);
   else renderProjectPO(b,p);
 }
 function docRowActions(q,kind){
@@ -894,6 +897,30 @@ function docRowActions(q,kind){
     <button class="btn ghost small danger" onclick="event.stopPropagation();deleteQuote('${q.id}')">Delete</button>`;
 }
 function docTable(list,kind,emptyMsg){
+  if(kind==="bap") return `<div class="card" style="margin-bottom:22px"><table class="grid">
+    <thead><tr><th>BA no.</th><th>Title / termin</th><th>Date</th><th>Ref. quotation</th><th class="t-right">Contract value</th><th class="t-right">Overall progress</th><th></th></tr></thead>
+    <tbody>${list.length?list.map(q=>`
+      <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
+        <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
+        <td>${esc(q.title||"Untitled")} ${q.extra?.termin?`<span class="pill amber">${esc(q.extra.termin)}</span>`:""}</td>
+        <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
+        <td style="font-size:12.5px">${esc(q.extra?.refQuote||"—")}</td>
+        <td class="t-right num">${fmtRp(quoteSubtotal(q))}</td>
+        <td class="t-right num" style="font-weight:700;color:var(--accent-dark)">${fmtN(bapOverall(q))}%</td>
+        <td class="t-right" style="white-space:nowrap">${docRowActions(q,kind)}</td>
+      </tr>`).join(""):`<tr><td colspan="7"><div class="empty">${emptyMsg}</div></td></tr>`}
+    </tbody></table></div>`;
+  if(kind==="bast") return `<div class="card" style="margin-bottom:22px"><table class="grid">
+    <thead><tr><th>BAST no.</th><th>Title</th><th>Date</th><th>Ref. (quotation / SPK / PO)</th><th></th></tr></thead>
+    <tbody>${list.length?list.map(q=>`
+      <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
+        <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
+        <td>${esc(q.title||"Untitled")}</td>
+        <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
+        <td style="font-size:12.5px">${esc([q.extra?.refQuote,q.extra?.spkNo].filter(Boolean).join(" · ")||"—")}</td>
+        <td class="t-right" style="white-space:nowrap">${docRowActions(q,kind)}</td>
+      </tr>`).join(""):`<tr><td colspan="5"><div class="empty">${emptyMsg}</div></td></tr>`}
+    </tbody></table></div>`;
   if(kind==="sj") return `<div class="card" style="margin-bottom:22px"><table class="grid">
     <thead><tr><th>SJ no.</th><th>Title</th><th>Date</th><th>Ref. quotation</th><th>Deliver to</th><th class="t-right">Items</th><th></th></tr></thead>
     <tbody>${list.length?list.map(q=>`
@@ -1112,6 +1139,105 @@ async function doSJFromQuote(quoteId){
   go({view:"quote",quoteId:q.id});
 }
 
+function renderProjectBA(b,p){
+  const moss=kindQuotes(p.id,"mos"), baps=kindQuotes(p.id,"bap"), basts=kindQuotes(p.id,"bast");
+  b.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="eyebrow">Material on site approval</span>
+      <button class="btn primary small" onclick="pickQuoteForDoc('${p.id}','mos')">+ MOS from quotation</button>
+    </div>
+    ${docTable(moss,"mos","Pick items from a quotation with quantities currently on site — for client / MK approval and material payment claims.")}
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="eyebrow">BA Progress (berita acara kemajuan pekerjaan)</span>
+      <button class="btn primary small" onclick="pickQuoteForDoc('${p.id}','bap')">+ BA Progress from quotation</button>
+    </div>
+    ${docTable(baps,"bap","Creates an item-by-item progress certificate weighted by contract value. Tip: for the next termin, Duplicate the previous BA and update the percentages.")}
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="eyebrow">BAST (berita acara serah terima)</span>
+      <button class="btn primary small" onclick="newBAST('${p.id}')">+ New BAST</button>
+    </div>
+    ${docTable(basts,"bast","The handover certificate after project completion — 100% done, works delivered and accepted.")}`;
+}
+function pickQuoteForDoc(pid,kind){
+  const quotes=kindQuotes(pid,"quote");
+  if(!quotes.length) return alert("No quotations in this project yet.");
+  if(quotes.length===1) return kind==="mos"?openMOSFromQuote(quotes[0].id):doBAPFromQuote(quotes[0].id);
+  openModal("Choose source quotation",`
+    <div class="field"><label>Quotation</label>
+      <select id="doc_src">${quotes.map(x=>`<option value="${x.id}">${esc(x.quoteNumber||x.title)}</option>`).join("")}</select></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="${kind==="mos"?"openMOSFromQuote($('#doc_src').value)":"doBAPFromQuote($('#doc_src').value)"}">Next</button>`);
+}
+function openMOSFromQuote(quoteId){
+  const src=getQuote(quoteId);
+  let rows="";
+  src.sections.forEach((sec,si)=>{
+    rows+=`<tr style="background:#F3F6F3"><td colspan="5" style="font-weight:700;font-size:12px">${esc(sec.name).toUpperCase()}
+      <label style="font-weight:400;margin-left:10px;font-size:11.5px;color:var(--muted)"><input type="checkbox" checked onchange="document.querySelectorAll('.mositem-s${si}').forEach(c=>c.checked=this.checked)"> select all</label></td></tr>`;
+    sec.items.forEach((it,ii)=>{
+      rows+=`<tr>
+        <td><input type="checkbox" class="mositem mositem-s${si}" data-si="${si}" data-ii="${ii}" checked></td>
+        <td style="font-weight:600;white-space:nowrap">${esc(it.brand)} ${esc(it.series)}</td>
+        <td style="font-size:12px;color:var(--muted)">${esc(it.description)}</td>
+        <td class="num" style="font-size:12px;white-space:nowrap">contract: ${fmtN(it.qty)} ${esc(it.unit)}</td>
+        <td><input type="number" min="0" step="any" class="mosqty" data-si="${si}" data-ii="${ii}" value="${it.qty}"
+          style="width:80px;border:1px solid var(--line);border-radius:6px;padding:4px 8px;text-align:right;font-family:var(--mono)"></td></tr>`;
+    });
+  });
+  openModal("Material on site — items from “"+esc(src.quoteNumber||src.title)+"”",`
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Set the quantity currently on site per item. Values are taken from quotation prices for the material claim.</p>
+    <div style="max-height:48vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px">
+      <table class="grid"><tbody>${rows}</tbody></table></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="doMOSFromQuote('${quoteId}')">Create MOS</button>`,true);
+}
+async function doMOSFromQuote(quoteId){
+  const src=getQuote(quoteId);
+  const qtyOf=(si,ii)=>Number(document.querySelector(`.mosqty[data-si="${si}"][data-ii="${ii}"]`)?.value)||0;
+  const picked=[...document.querySelectorAll(".mositem:checked")].map(c=>({si:+c.dataset.si,ii:+c.dataset.ii})).filter(x=>qtyOf(x.si,x.ii)>0);
+  if(!picked.length) return alert("Select at least one item with quantity on site above zero.");
+  const sections=[];
+  src.sections.forEach((sec,si)=>{
+    const items=sec.items.map((it,ii)=>({it,ii})).filter(x=>picked.some(k=>k.si===si&&k.ii===x.ii))
+      .map(x=>({...JSON.parse(JSON.stringify(x.it)),qty:qtyOf(si,x.ii)}));
+    if(items.length) sections.push({name:sec.name,items});
+  });
+  closeModal();
+  const n=kindQuotes(src.projectId,"mos").length+1;
+  const q={id:uid(),projectId:src.projectId,quoteNumber:"",title:"MOS "+n+" — "+(src.quoteNumber||src.title),
+    date:todayISO(),tax:false,kind:"mos",discount:{type:"percent",value:0},sections,notes:"",
+    extra:{refQuote:src.quoteNumber||src.title,refQuoteId:src.id}};
+  DB.quotations.push(q);
+  route.ptab="ba";
+  await persist(saveQuotes,"Material on Site created");
+  go({view:"quote",quoteId:q.id});
+}
+async function doBAPFromQuote(quoteId){
+  const src=getQuote(quoteId);
+  closeModal();
+  const sections=JSON.parse(JSON.stringify(src.sections));
+  sections.forEach(sec=>sec.items.forEach(it=>it.prog=0));
+  const n=kindQuotes(src.projectId,"bap").length+1;
+  const q={id:uid(),projectId:src.projectId,quoteNumber:"",title:"BA Progress "+n+" — "+(src.quoteNumber||src.title),
+    date:todayISO(),tax:false,kind:"bap",discount:{type:"percent",value:0},sections,notes:"",
+    extra:{refQuote:src.quoteNumber||src.title,refQuoteId:src.id,termin:"",periode:""}};
+  DB.quotations.push(q);
+  route.ptab="ba";
+  await persist(saveQuotes,"BA Progress created — set each line's % complete");
+  go({view:"quote",quoteId:q.id});
+}
+async function newBAST(pid){
+  const p=getProject(pid);
+  const quotes=kindQuotes(pid,"quote");
+  const q={id:uid(),projectId:pid,quoteNumber:"",title:"BAST — "+p.name,date:todayISO(),tax:false,kind:"bast",
+    discount:{type:"percent",value:0},sections:[],notes:"",
+    extra:{refQuote:quotes[0]?(quotes[0].quoteNumber||quotes[0].title):"",spkNo:"",scope:"",maintenance:""}};
+  DB.quotations.push(q);
+  route.ptab="ba";
+  await persist(saveQuotes,"BAST created");
+  go({view:"quote",quoteId:q.id});
+}
+
 /* ---------- document creation flows ---------- */
 async function newQuote(pid,kind){
   kind=kind||"quote";
@@ -1274,11 +1400,13 @@ function renderQuote(v,q,p){
   if(!q||!p){ go({view:"home"}); return; }
   if(!canSeeProject(p)||!can(docPerm(q.kind))){ toast("You don't have access to this document type"); go({view:"home"}); return; }
   if(q.kind==="receipt"){ renderReceipt(v,q,p); return; }
+  if(q.kind==="bap"){ renderBAP(v,q,p); return; }
+  if(q.kind==="bast"){ renderBAST(v,q,p); return; }
   v.innerHTML=`
     <div class="page-head">
       <div>
         <button class="btn ghost small" onclick="go({view:'project',projectId:'${p.id}'})" style="margin-bottom:8px;padding-left:0">← ${esc(p.name)}</button>
-        <span class="eyebrow" ${q.kind==="rap"?'style="color:var(--amber)"':""}>${q.kind==="rap"?"RAP / Budget estimation (internal)":q.kind==="invoice"?"Invoice":q.kind==="po"?"Purchase order":q.kind==="sj"?"Surat jalan / delivery note":"Quotation"} · ${esc(projCompany(p).name)}</span>
+        <span class="eyebrow" ${q.kind==="rap"?'style="color:var(--amber)"':""}>${q.kind==="rap"?"RAP / Budget estimation (internal)":q.kind==="invoice"?"Invoice":q.kind==="po"?"Purchase order":q.kind==="sj"?"Surat jalan / delivery note":q.kind==="mos"?"Material on site approval":"Quotation"} · ${esc(projCompany(p).name)}</span>
         <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(480px,80vw)" value="${esc(q.title)}" placeholder="Quotation title / option name" onchange="qSet('${q.id}','title',this.value)"></h1>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1310,6 +1438,8 @@ function renderQuote(v,q,p){
         <div class="field"><label>Driver</label><input value="${esc(q.extra?.driver||"")}" onchange="exSet('${q.id}','driver',this.value)"></div>
       </div>
       <div class="sub" style="font-size:12px;color:var(--muted);margin-bottom:8px">Ref. quotation: <strong>${esc(q.extra?.refQuote||"—")}</strong> · prices are never shown on a surat jalan.</div>`:""}
+      ${q.kind==="mos"?`
+      <div class="sub" style="font-size:12px;color:var(--muted);margin-bottom:8px">Ref. quotation: <strong>${esc(q.extra?.refQuote||"—")}</strong> · quantities represent material currently on site; values follow quotation prices.</div>`:""}
       ${q.kind==="po"?`
       <div class="field-row c2">
         <div class="field"><label>Distributor / store (PO recipient)</label>
@@ -1527,6 +1657,95 @@ function renderReceipt(v,q,p){
     </div>`;
 }
 
+/* ================= BA PROGRESS EDITOR ================= */
+function renderBAP(v,q,p){
+  const sub=quoteSubtotal(q), overall=bapOverall(q);
+  const secHTML=(s,si)=>`
+    <div class="section-block">
+      <div class="section-head"><input value="${esc(s.name)}" onchange="renameSection('${q.id}',${si},this.value)"></div>
+      <div class="section-body"><table class="grid boq-table" style="min-width:900px">
+        <thead><tr><th style="width:26px">#</th><th>Item</th><th style="width:70px" class="t-right">Qty</th><th style="width:60px">Unit</th><th style="width:120px" class="t-right">Value</th><th style="width:76px" class="t-right">Weight</th><th style="width:110px" class="t-right">Progress %</th><th style="width:90px" class="t-right">Weighted</th><th style="width:40px"></th></tr></thead>
+        <tbody>${s.items.map((it,ii)=>{
+          const w=sub>0?lineTotal(it)/sub*100:0;
+          return `<tr>
+            <td class="num" style="color:var(--muted);font-size:12px">${ii+1}</td>
+            <td><strong>${esc(it.brand)} ${esc(it.series)}</strong> <span style="color:var(--muted);font-size:12px">${esc(it.description)}</span></td>
+            <td class="t-right num">${fmtN(it.qty)}</td><td>${esc(it.unit)}</td>
+            <td class="t-right num">${fmtRp(lineTotal(it))}</td>
+            <td class="t-right num" style="color:var(--muted)">${w.toFixed(2)}%</td>
+            <td class="t-right"><input type="number" min="0" max="100" step="any" value="${it.prog||0}"
+              onchange="itemSet('${q.id}',${si},${ii},'prog',Math.min(100,Number(this.value)||0))"
+              style="width:84px;border:1px solid var(--line);border-radius:6px;padding:4px 8px;text-align:right;font-family:var(--mono)"></td>
+            <td class="t-right num" style="font-weight:600;color:var(--accent-dark)">${(w*(Number(it.prog)||0)/100).toFixed(2)}%</td>
+            <td class="rowtools"><button class="del" onclick="removeItem('${q.id}',${si},${ii})" title="Remove from BA">✕</button></td>
+          </tr>`;}).join("")}
+        </tbody></table></div>
+    </div>`;
+  v.innerHTML=`
+    <div class="page-head">
+      <div>
+        <button class="btn ghost small" onclick="route.ptab='ba';go({view:'project',projectId:'${p.id}'})" style="margin-bottom:8px;padding-left:0">← ${esc(p.name)}</button>
+        <span class="eyebrow">BA Progress · ${esc(projCompany(p).name)}</span>
+        <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(520px,80vw)" value="${esc(q.title)}" onchange="qSet('${q.id}','title',this.value)"></h1>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" onclick="printBAP('${q.id}')">⤓ PDF</button>
+        <button class="btn primary" onclick="persist(saveQuotes)">Save</button>
+      </div>
+    </div>
+    <div class="card card-pad" style="margin-bottom:22px">
+      <div class="field-row c3">
+        <div class="field"><label>BA number (manual)</label><input value="${esc(q.quoteNumber)}" placeholder="e.g. BA/SAM/2026/07-002" onchange="qSet('${q.id}','quoteNumber',this.value)"></div>
+        <div class="field"><label>Date</label><input type="date" value="${esc(q.date)}" onchange="qSet('${q.id}','date',this.value)"></div>
+        <div class="field"><label>Termin / claim (printed)</label><input value="${esc(q.extra?.termin||"")}" placeholder="e.g. Termin 2 — 50%" onchange="exSet('${q.id}','termin',this.value)"></div>
+      </div>
+      <div class="field" style="margin-bottom:0"><label>Work period (periode pekerjaan)</label><input value="${esc(q.extra?.periode||"")}" placeholder="e.g. 1 – 31 Juli 2026" onchange="exSet('${q.id}','periode',this.value)"></div>
+    </div>
+    <div class="card card-pad" style="margin-bottom:22px;background:var(--accent-soft);border-color:var(--accent)">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <span class="eyebrow">Overall weighted progress</span>
+        <span class="num" style="font-size:28px;font-weight:800;color:var(--accent-dark)">${fmtN(overall)}%</span>
+      </div>
+      <div style="font-size:12px;color:var(--muted)">Weight per item = item value ÷ contract value (${fmtRp(sub)}). Progress is cumulative to date — for the next termin, duplicate this BA and update.</div>
+    </div>
+    <div id="sections">${q.sections.map((s,si)=>secHTML(s,si)).join("")}</div>
+    <div class="card card-pad" style="margin-top:22px">
+      <span class="eyebrow">Notes (printed)</span>
+      <textarea rows="4" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;outline:none;margin-top:8px"
+        oninput="qSetSilent('${q.id}','notes',this.value)">${esc(q.notes)}</textarea>
+    </div>`;
+}
+
+/* ================= BAST EDITOR ================= */
+function renderBAST(v,q,p){
+  const x=q.extra||{};
+  v.innerHTML=`
+    <div class="page-head">
+      <div>
+        <button class="btn ghost small" onclick="route.ptab='ba';go({view:'project',projectId:'${p.id}'})" style="margin-bottom:8px;padding-left:0">← ${esc(p.name)}</button>
+        <span class="eyebrow">BAST — Berita acara serah terima · ${esc(projCompany(p).name)}</span>
+        <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(520px,80vw)" value="${esc(q.title)}" onchange="qSet('${q.id}','title',this.value)"></h1>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" onclick="printBAST('${q.id}')">⤓ PDF</button>
+        <button class="btn primary" onclick="persist(saveQuotes)">Save</button>
+      </div>
+    </div>
+    <div class="card card-pad" style="max-width:760px">
+      <div class="field-row c2">
+        <div class="field"><label>BAST number (manual)</label><input value="${esc(q.quoteNumber)}" placeholder="e.g. BAST/SAM/2026/08-001" onchange="qSet('${q.id}','quoteNumber',this.value)"></div>
+        <div class="field"><label>Handover date</label><input type="date" value="${esc(q.date)}" onchange="qSet('${q.id}','date',this.value)"></div>
+      </div>
+      <div class="field-row c2">
+        <div class="field"><label>Ref. quotation / contract</label><input value="${esc(x.refQuote||"")}" onchange="exSet('${q.id}','refQuote',this.value)"></div>
+        <div class="field"><label>SPK / PO number (client's)</label><input value="${esc(x.spkNo||"")}" placeholder="optional" onchange="exSet('${q.id}','spkNo',this.value)"></div>
+      </div>
+      <div class="field"><label>Scope of work (lingkup pekerjaan)</label><textarea rows="3" placeholder="e.g. Pengadaan dan instalasi sistem tata suara Multifunction Room…" onchange="exSet('${q.id}','scope',this.value)">${esc(x.scope||"")}</textarea></div>
+      <div class="field"><label>Maintenance / warranty period (masa pemeliharaan) — optional</label><input value="${esc(x.maintenance||"")}" placeholder="e.g. 90 hari kalender sejak tanggal serah terima" onchange="exSet('${q.id}','maintenance',this.value)"></div>
+      <div class="field" style="margin-bottom:0"><label>Additional notes (printed)</label><textarea rows="3" oninput="qSetSilent('${q.id}','notes',this.value)">${esc(q.notes)}</textarea></div>
+    </div>`;
+}
+
 /* ================= equipment picker ================= */
 let pickerCtx=null;
 function openPicker(qid,si){
@@ -1616,15 +1835,16 @@ function printQuote(qid){
     });
     rows+=`<tr class="subtotal"><td colspan="7" style="text-align:right">Subtotal — ${esc(s.name)}</td><td class="num-p" style="text-align:right">${fmtRp(sectionTotal(s))}</td></tr>`;
   });
-  const isRap=q.kind==="rap", isInv=q.kind==="invoice", isPO=q.kind==="po", isSJ=q.kind==="sj";
+  const isRap=q.kind==="rap", isInv=q.kind==="invoice", isPO=q.kind==="po", isSJ=q.kind==="sj", isMOS=q.kind==="mos";
   if(isSJ) return printSJ(q,p);
-  const title=isRap?"PROJECT BUDGET (RAP)":isInv?"INVOICE":isPO?"PURCHASE ORDER":"QUOTATION";
+  const title=isRap?"PROJECT BUDGET (RAP)":isInv?"INVOICE":isPO?"PURCHASE ORDER":isMOS?"MATERIAL ON SITE APPROVAL":"QUOTATION";
   const dist=isPO?getDistributor(q.extra?.distributor):null;
   const meta=[["Project",p.name],["Location",p.location||"—"],
       [KIND_LABEL[q.kind||"quote"]+" no.",q.quoteNumber||"—"],["Title",q.title||"—"],
       ["Date",fmtDate(q.date)],["Exported",new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})]];
   if(isInv) meta.splice(2,0,["Bill to",q.extra?.billTo||p.client||"—"]);
   if(isPO){ meta.splice(2,0,["Ship to",q.extra?.shipTo||"—"]); if(q.extra?.refRAP) meta.push(["Ref. RAP",q.extra.refRAP]); }
+  if(isMOS&&q.extra?.refQuote) meta.push(["Ref. quotation",q.extra.refQuote]);
   $("#printArea").innerHTML=`<div class="p-doc">
     ${docHeaderHTML(title,p,meta)}
     ${isPO?`<div style="border:1pt solid #111;padding:8px 10px;margin-bottom:10px;font-size:11px">
@@ -1645,7 +1865,7 @@ function printQuote(qid){
     ${isInv&&projCompany(p).bank?`<div style="border:1pt solid #111;padding:8px 10px;margin-top:12px;font-size:11px;width:60%">
       <strong>PAYMENT — PLEASE TRANSFER TO:</strong><div style="white-space:pre-wrap;margin-top:3px">${esc(projCompany(p).bank)}</div></div>`:""}
     ${q.notes.trim()?`<div class="p-notes"><h4>Notes & Terms</h4><div>${esc(q.notes)}</div></div>`:""}
-    ${isPO?poSignHTML(p,q):signBlockHTML(p,isInv?"Received by":"Approved by",isRap?"Management":isInv?"":(p.client||""))}
+    ${isPO?poSignHTML(p,q):signBlockHTML(p,isInv?"Received by":isMOS?"Disetujui oleh / Approved by":"Approved by",isRap?"Management":isInv?"":(p.client||""))}
   </div>`;
   doPrint((q.quoteNumber||q.title||KIND_LABEL[q.kind||"quote"])+" - "+p.name);
 }
@@ -1685,6 +1905,82 @@ function printSJ(q,p){
     </div>
   </div>`;
   doPrint((q.quoteNumber||q.title||"Surat Jalan")+" - "+p.name);
+}
+function baSignHTML(p,firstLabel,secondLabel){
+  const S=(p&&p.sig)||{};
+  const blank='(&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;)';
+  return `<div class="p-sign">
+    <div class="box"><strong>PIHAK PERTAMA</strong><br>${firstLabel}<div class="line"></div>
+      <div class="sname">${S.apprName?"( "+esc(S.apprName)+" )":(p.client?"( "+esc(p.client)+" )":blank)}</div>
+      ${S.apprCompany?`<div class="sco">${esc(S.apprCompany)}</div>`:""}</div>
+    <div class="box"><strong>PIHAK KEDUA</strong><br>${secondLabel}<div class="line"></div>
+      <div class="sname">${S.prepName?"( "+esc(S.prepName)+" )":blank}</div>
+      ${S.prepTitle?`<div class="srole">${esc(S.prepTitle)}</div>`:""}
+      <div class="sco">${esc(projCompany(p).name)}</div></div>
+  </div>`;
+}
+function printBAP(qid){
+  const q=getQuote(qid), p=getProject(q.projectId), x=q.extra||{};
+  if(dirty) persist(saveQuotes);
+  const sub=quoteSubtotal(q), overall=bapOverall(q);
+  let rows="", no=0;
+  q.sections.forEach(sec=>{
+    rows+=`<tr class="sec"><td colspan="8">${esc(sec.name).toUpperCase()}</td></tr>`;
+    sec.items.forEach(it=>{ no++;
+      const w=sub>0?lineTotal(it)/sub*100:0;
+      rows+=`<tr><td class="num-p">${no}</td><td>${esc((it.brand+" "+it.series).trim())} ${it.description?"— "+esc(it.description):""}</td>
+        <td class="num-p" style="text-align:right">${fmtN(it.qty)}</td><td>${esc(it.unit)}</td>
+        <td class="num-p" style="text-align:right">${fmtRp(lineTotal(it))}</td>
+        <td class="num-p" style="text-align:right">${w.toFixed(2)}%</td>
+        <td class="num-p" style="text-align:right">${fmtN(it.prog||0)}%</td>
+        <td class="num-p" style="text-align:right">${(w*(Number(it.prog)||0)/100).toFixed(2)}%</td></tr>`;
+    });
+  });
+  const meta=[["Project",p.name],["Location",p.location||"—"],["BA no.",q.quoteNumber||"—"],
+    ["Date",fmtDate(q.date)],["Ref. quotation",x.refQuote||"—"]];
+  if(x.termin) meta.push(["Termin / claim",x.termin]);
+  if(x.periode) meta.push(["Work period",x.periode]);
+  $("#printArea").innerHTML=`<div class="p-doc">
+    ${docHeaderHTML("BERITA ACARA PROGRESS PEKERJAAN",p,meta)}
+    <p style="font-size:11px;margin:4px 0 10px">Pada hari ini, kedua belah pihak — <strong>${esc(p.client||"PIHAK PERTAMA")}</strong> selaku PIHAK PERTAMA dan
+      <strong>${esc(projCompany(p).name)}</strong> selaku PIHAK KEDUA — menyatakan bahwa kemajuan pekerjaan <strong>${esc(p.name)}</strong>
+      ${x.refQuote?"berdasarkan "+esc(x.refQuote)+" ":""}telah mencapai <strong>${fmtN(overall)}%</strong> dengan rincian sebagai berikut:</p>
+    <table class="p-table">
+      <thead><tr><th style="width:22px">No</th><th>Uraian Pekerjaan / Item</th><th style="width:42px;text-align:right">Qty</th><th style="width:40px">Unit</th><th style="width:92px;text-align:right">Nilai</th><th style="width:56px;text-align:right">Bobot</th><th style="width:62px;text-align:right">Progress</th><th style="width:66px;text-align:right">Tertimbang</th></tr></thead>
+      <tbody>${rows}
+      <tr class="subtotal"><td colspan="4" style="text-align:right">TOTAL</td>
+        <td class="num-p" style="text-align:right">${fmtRp(sub)}</td>
+        <td class="num-p" style="text-align:right">100%</td><td></td>
+        <td class="num-p" style="text-align:right">${fmtN(overall)}%</td></tr>
+      </tbody></table>
+    ${q.notes.trim()?`<div class="p-notes"><h4>Notes</h4><div>${esc(q.notes)}</div></div>`:""}
+    ${baSignHTML(p,"Menyetujui,","Yang menyatakan,")}
+  </div>`;
+  doPrint((q.quoteNumber||q.title||"BA Progress")+" - "+p.name);
+}
+function printBAST(qid){
+  const q=getQuote(qid), p=getProject(q.projectId), x=q.extra||{}, C=projCompany(p);
+  if(dirty) persist(saveQuotes);
+  const meta=[["BAST no.",q.quoteNumber||"—"],["Date",fmtDate(q.date)],["Project",p.name],["Location",p.location||"—"]];
+  if(x.refQuote) meta.push(["Ref. quotation",x.refQuote]);
+  if(x.spkNo) meta.push(["SPK / PO no.",x.spkNo]);
+  $("#printArea").innerHTML=`<div class="p-doc">
+    ${docHeaderHTML("BERITA ACARA SERAH TERIMA",p,meta)}
+    <p style="font-size:11px;margin:6px 0 8px">Pada hari ini, ${fmtDate(q.date)}, yang bertanda tangan di bawah ini:</p>
+    <table class="p-meta" style="font-size:11px">
+      <tr><td class="k">PIHAK PERTAMA</td><td>: <strong>${esc(p.client||"—")}</strong> (pemberi pekerjaan / client)</td></tr>
+      <tr><td class="k">PIHAK KEDUA</td><td>: <strong>${esc(C.name)}</strong> (penyedia / contractor)</td></tr>
+    </table>
+    <p style="font-size:11px;margin:8px 0">Dengan ini menyatakan bahwa PIHAK KEDUA telah menyelesaikan <strong>100%</strong> pekerjaan
+      ${x.scope?": <strong>"+esc(x.scope)+"</strong>":"proyek <strong>"+esc(p.name)+"</strong>"}
+      ${x.refQuote||x.spkNo?" berdasarkan "+esc([x.refQuote,x.spkNo].filter(Boolean).join(" / ")):""},
+      dan PIHAK PERTAMA telah menerima hasil pekerjaan tersebut dalam keadaan baik dan lengkap. /
+      <em>The Second Party has completed 100% of the works and the First Party has received the results in good and complete condition.</em></p>
+    ${x.maintenance?`<p style="font-size:11px;margin:6px 0">Masa pemeliharaan / maintenance period: <strong>${esc(x.maintenance)}</strong>.</p>`:""}
+    ${q.notes.trim()?`<div class="p-notes"><h4>Notes</h4><div>${esc(q.notes)}</div></div>`:""}
+    ${baSignHTML(p,"Yang menerima,","Yang menyerahkan,")}
+  </div>`;
+  doPrint((q.quoteNumber||q.title||"BAST")+" - "+p.name);
 }
 function poSignHTML(p,q){
   const S=(p&&p.sig)||{};
