@@ -251,7 +251,7 @@ const CONFIG = {
 
 const SHEETS = {
   Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price","Price Updated","Distributor","Companies","Budget Prices","Sell Prices"],
-  Projects:     ["ID","Name","Location","Client","Created","Summary Notes","Signature","Company ID","Client ID","Engineers"],
+  Projects:     ["ID","Name","Location","Client","Created","Summary Notes","Signature","Company ID","Client ID","Engineers","Status"],
   Quotations:   ["ID","ProjectID","QuoteNumber","Title","Date","Tax","DataJSON","Updated"],
   NoteTemplates:["ID","Name","Content"],
   SignaturePresets:["ID","Name","JSON"],
@@ -397,7 +397,7 @@ async function loadAll(){
     let sig={}; try{sig=JSON.parse(r[6]||"{}")}catch(e){}
     return {id:r[0],name:r[1]||"",location:r[2]||"",client:r[3]||"",created:r[4]||"",summaryNotes:r[5]||"",
       sig:{prepName:sig.prepName||"",prepTitle:sig.prepTitle||"",apprName:sig.apprName||"",apprCompany:sig.apprCompany||""},
-      companyId:r[7]||"",clientId:r[8]||"",engineers:(r[9]||"").split(",").filter(Boolean)};
+      companyId:r[7]||"",clientId:r[8]||"",engineers:(r[9]||"").split(",").filter(Boolean),status:r[10]||"onquote"};
   });
   DB.quotations=qu.filter(r=>r[0]).map(r=>{
     let d={}; try{d=JSON.parse(r[6]||"{}")}catch(e){}
@@ -419,7 +419,7 @@ async function saveTab(tab,rows){
   }
 }
 const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||"",e.distributor||"",(e.companies||[]).join(","),JSON.stringify(e.costs||{}),JSON.stringify(e.prices||{})]));
-const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||"",JSON.stringify(p.sig||{}),p.companyId||"",p.clientId||"",(p.engineers||[]).join(",")]));
+const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||"",JSON.stringify(p.sig||{}),p.companyId||"",p.clientId||"",(p.engineers||[]).join(","),p.status||"onquote"]));
 const saveSigPresets=()=>saveTab("SignaturePresets",DB.sigPresets.map(t=>[t.id,t.name,JSON.stringify({prepName:t.prepName||"",prepTitle:t.prepTitle||"",apprName:t.apprName||"",apprCompany:t.apprCompany||""})]));
 const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0},extra:q.extra||{}}),new Date().toISOString()]));
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
@@ -468,6 +468,17 @@ const priceOf=(e,cid)=>{const v=Number(e.prices?.[cid]); return v>0?v:(Number(e.
 const docCompanyId=q=>{const p=getProject(q.projectId); return p?.companyId||DB.companies[0]?.id;};
 const bapOverall=q=>{const sub=quoteSubtotal(q);return sub>0?q.sections.reduce((a,s)=>a+s.items.reduce((x,it)=>x+lineTotal(it)*(Number(it.prog)||0)/100,0),0)/sub*100:0;};
 const getDistributor=name=>DB.distributors.find(d=>d.name.trim().toLowerCase()===String(name||"").trim().toLowerCase());
+const PSTATUS={
+  onquote:    {label:"On Quote",   fg:"#B4720E", bg:"#F7EDDA"},
+  won:        {label:"Won",        fg:"#0A5C43", bg:"#E3F1EB"},
+  ongoing:    {label:"On Going",   fg:"#0C7C59", bg:"#DFF4EA"},
+  onhold:     {label:"On Hold",    fg:"#5C665F", bg:"#EDF1EC"},
+  done:       {label:"Done",       fg:"#FFFFFF", bg:"#0A5C43"},
+  maintenance:{label:"Maintenance",fg:"#0A5C43", bg:"#CBE9DC"},
+  lost:       {label:"Lost",       fg:"#B3382C", bg:"#F7E4E1"},
+  cancelled:  {label:"Cancelled",  fg:"#FFFFFF", bg:"#8A948C"}
+};
+const statusPill=st=>{const x=PSTATUS[st]||PSTATUS.onquote;return `<span class="pill" style="background:${x.bg};color:${x.fg}">${x.label}</span>`;};
 const KIND_LABEL={quote:"Quotation",rap:"RAP",invoice:"Invoice",receipt:"Receipt",po:"Purchase Order",sj:"Surat Jalan",mos:"Material on Site",bap:"BA Progress",bast:"BAST"};
 function terbilang(n){
   n=Math.floor(Math.abs(Number(n)||0));
@@ -583,15 +594,25 @@ async function reloadData(){ try{ await loadAll(); render(); toast("Data reloade
 
 function renderProjectList(b){
   const co=DB.companies.find(c=>c.id===ACTIVE_COMPANY);
-  const head=`<div style="display:flex;gap:10px;margin-bottom:14px;align-items:center">
-    <span class="eyebrow">Projects of</span><span class="pill" style="font-size:12.5px">${esc(co?.name||"—")}</span></div>`;
-  const list=DB.projects.filter(p=>canSeeProject(p)&&(p.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY);
-  if(!list.length){ b.innerHTML=head+`<div class="card"><div class="empty"><span class="eyebrow">No projects yet for ${esc(co?.name||"this company")}</span>${can("manage")?"Create the first project with “+ New project”.":"Projects will appear here once created."}</div></div>`; return; }
+  const all=DB.projects.filter(p=>canSeeProject(p)&&(p.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY);
+  const cnt=k=>all.filter(p=>(p.status||"onquote")===k).length;
+  const chip=(k,label,n,active)=>`<button class="btn small" style="border-radius:99px;${active?"background:var(--ink);color:#fff;border-color:var(--ink)":""}"
+    onclick="projStatusFilter='${k}';render()">${label}${n!==undefined?` <span class="num" style="opacity:.7">${n}</span>`:""}</button>`;
+  const head=`<div style="display:flex;gap:10px;margin-bottom:10px;align-items:center">
+    <span class="eyebrow">Projects of</span><span class="pill" style="font-size:12.5px">${esc(co?.name||"—")}</span></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+      ${chip("","All",all.length,projStatusFilter==="")}
+      ${Object.entries(PSTATUS).map(([k,v])=>cnt(k)?chip(k,v.label,cnt(k),projStatusFilter===k):"").join("")}
+    </div>`;
+  const list=projStatusFilter?all.filter(p=>(p.status||"onquote")===projStatusFilter):all;
+  if(!all.length){ b.innerHTML=head+`<div class="card"><div class="empty"><span class="eyebrow">No projects yet for ${esc(co?.name||"this company")}</span>${can("manage")?"Create the first project with “+ New project”.":"Projects will appear here once created."}</div></div>`; return; }
+  if(!list.length){ b.innerHTML=head+`<div class="card"><div class="empty">No ${esc(PSTATUS[projStatusFilter]?.label||"")} projects.</div></div>`; return; }
   b.innerHTML=head+`<div class="card"><table class="grid">
-    <thead><tr><th>Project</th><th>Company</th><th>Location</th><th>Client</th><th>Docs</th><th>Created</th><th></th></tr></thead>
+    <thead><tr><th>Project</th><th>Status</th><th>Company</th><th>Location</th><th>Client</th><th>Docs</th><th>Created</th><th></th></tr></thead>
     <tbody>${list.map(p=>`
       <tr class="rowlink" onclick="go({view:'project',projectId:'${p.id}'})">
         <td style="font-weight:600">${esc(p.name)}</td>
+        <td>${statusPill(p.status)}</td>
         <td><span class="pill">${esc(projCompany(p).name)}</span></td>
         <td>${esc(p.location)}</td>
         <td>${esc(p.client)}</td>
@@ -606,6 +627,8 @@ function openProjectModal(p){
     <div class="field"><label>Issuer company (shown on all PDF headers)</label>
       <select id="m_company">${DB.companies.filter(c=>allowedCompanyIds().includes(c.id)).map(c=>`<option value="${c.id}" ${(p?.companyId||ACTIVE_COMPANY||DB.companies[0]?.id)===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}</select></div>
     <div class="field"><label>Project name</label><input id="m_name" value="${esc(p?.name||"")}" placeholder="e.g. Paragon Multifunction Room"></div>
+    <div class="field"><label>Project status</label>
+      <select id="m_status">${Object.entries(PSTATUS).map(([k,v])=>`<option value="${k}" ${(p?.status||"onquote")===k?"selected":""}>${v.label}</option>`).join("")}</select></div>
     ${(()=>{const engs=DB.users.filter(u=>u.roles.includes("engineer"));
       if(!engs.length) return "";
       const sel=p?.engineers||[];
@@ -634,8 +657,8 @@ async function saveProjectModal(id){
   const clientId=$("#m_clientsel").value;
   const clientName=$("#m_client").value.trim()||(clientId?(DB.clients.find(x=>x.id===clientId)?.name||""):"");
   const engineers=[...document.querySelectorAll(".m_eng:checked")].map(x=>x.value);
-  if(id){ const p=getProject(id); p.name=name; p.location=$("#m_loc").value.trim(); p.client=clientName; p.clientId=clientId; p.companyId=$("#m_company").value; p.engineers=engineers; }
-  else DB.projects.unshift({id:uid(),name,location:$("#m_loc").value.trim(),client:clientName,clientId,companyId:$("#m_company").value,created:todayISO(),summaryNotes:"",engineers,sig:{prepName:"",prepTitle:"",apprName:"",apprCompany:""}});
+  if(id){ const p=getProject(id); p.name=name; p.location=$("#m_loc").value.trim(); p.client=clientName; p.clientId=clientId; p.companyId=$("#m_company").value; p.engineers=engineers; p.status=$("#m_status").value; }
+  else DB.projects.unshift({id:uid(),name,location:$("#m_loc").value.trim(),client:clientName,clientId,companyId:$("#m_company").value,created:todayISO(),summaryNotes:"",engineers,status:$("#m_status").value,sig:{prepName:"",prepTitle:"",apprName:"",apprCompany:""}});
   closeModal(); render(); await persist(saveProjects);
 }
 async function deleteProject(id){
@@ -647,6 +670,7 @@ async function deleteProject(id){
 }
 
 /* ================= EQUIPMENT TAB ================= */
+let projStatusFilter="";
 let eqSearch="", eqF={brand:"",series:"",description:"",category:"",unit:"",distributor:""};
 function renderEquipmentTab(b){
   const cats=[...new Set(DB.equipment.map(e=>e.category).filter(Boolean))].sort();
@@ -807,7 +831,8 @@ function renderDashboardTab(b){
   const docs=k=>DB.quotations.filter(q=>pids.has(q.projectId)&&(q.kind||"quote")===k);
   const quotes=docs("quote"), invs=docs("invoice"), recs=docs("receipt"), pos=docs("po"), raps=docs("rap");
   // KPIs
-  const pipeline=quotes.reduce((a,q)=>a+quoteGrand(q),0);
+  const deadIds=new Set(projs.filter(p=>["lost","cancelled"].includes(p.status)).map(p=>p.id));
+  const pipeline=quotes.filter(q=>!deadIds.has(q.projectId)).reduce((a,q)=>a+quoteGrand(q),0);
   const invoiced=invs.reduce((a,q)=>a+quoteGrand(q),0);
   const received=recs.reduce((a,q)=>a+(Number(q.extra?.amount)||0),0);
   const receivable=projs.reduce((a,p)=>{
@@ -860,7 +885,7 @@ function renderDashboardTab(b){
     </div>
 
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">
-      ${kpi("Pipeline (quotations)",pipeline,"var(--accent)",quotes.length+" quotation(s)")}
+      ${kpi("Pipeline (quotations)",pipeline,"var(--accent)","excl. lost/cancelled projects")}
       ${kpi("Invoiced",invoiced,"var(--accent)",invs.length+" invoice(s)")}
       ${kpi("Received",received,"var(--accent-dark)",recs.length+" receipt(s)")}
       ${kpi("Receivables outstanding",receivable,"var(--red)","invoiced − received")}
@@ -1189,7 +1214,13 @@ function renderProject(v,p){
     <div class="page-head">
       <div>
         <button class="btn ghost small" onclick="go({view:'home'})" style="margin-bottom:8px;padding-left:0">← All projects</button>
-        <span class="eyebrow">Project · ${esc(co.name)}</span><h1>${esc(p.name)}</h1>
+        <span class="eyebrow">Project · ${esc(co.name)}</span>
+        <h1 style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">${esc(p.name)}
+          ${can("manage")?`<select onchange="setProjectStatus('${p.id}',this.value)"
+            style="font-size:12px;font-weight:600;border:1px solid var(--line);border-radius:99px;padding:4px 10px;background:${(PSTATUS[p.status]||PSTATUS.onquote).bg};color:${(PSTATUS[p.status]||PSTATUS.onquote).fg}">
+            ${Object.entries(PSTATUS).map(([k,v])=>`<option value="${k}" ${(p.status||"onquote")===k?"selected":""}>${v.label}</option>`).join("")}
+          </select>`:statusPill(p.status)}
+        </h1>
         <div class="sub">${esc(p.location||"No location")} ${p.client?"· "+esc(p.client):""}${can("manage")&&(p.engineers||[]).length?` · 👷 ${p.engineers.map(id=>esc((DB.users.find(u=>u.id===id)?.email||"?").split("@")[0])).join(", ")}`:""}</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1955,6 +1986,10 @@ function insertTemplate(qid){
   const tid=$("#tplSelect").value; if(!tid) return;
   const t=DB.templates.find(x=>x.id===tid), q=getQuote(qid);
   q.notes=(q.notes?q.notes+"\n\n":"")+t.content; setDirty(true); render();
+}
+async function setProjectStatus(pid,st){
+  getProject(pid).status=st; render();
+  await persist(saveProjects,"Status → "+(PSTATUS[st]?.label||st));
 }
 function sigSet(pid,k,v){ const p=getProject(pid); p.sig=p.sig||{}; p.sig[k]=v; setDirty(true); }
 function insertSigPreset(pid){
