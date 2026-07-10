@@ -250,12 +250,12 @@ const CONFIG = {
 { const m=CONFIG.SPREADSHEET_ID.match(/\/d\/([A-Za-z0-9_-]{20,})/); if(m) CONFIG.SPREADSHEET_ID=m[1]; }
 
 const SHEETS = {
-  Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price","Price Updated","Distributor"],
+  Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price","Price Updated","Distributor","Companies","Budget Prices"],
   Projects:     ["ID","Name","Location","Client","Created","Summary Notes","Signature","Company ID"],
   Quotations:   ["ID","ProjectID","QuoteNumber","Title","Date","Tax","DataJSON","Updated"],
   NoteTemplates:["ID","Name","Content"],
   SignaturePresets:["ID","Name","JSON"],
-  Distributors: ["ID","Name","Contact Person","Phone","Email","Address","Notes"],
+  Distributors: ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies"],
   Companies:    ["ID","Name","Tagline","Address","Contact","Bank Details"],
   Users:        ["ID","Email","Roles","Companies","Locked"]
 };
@@ -389,7 +389,8 @@ async function loadAll(){
   const ranges=Object.keys(SHEETS).map(t=>`ranges=${encodeURIComponent(t+"!A2:Z")}`).join("&");
   const res=await api("/values:batchGet?"+ranges);
   const [eq,pr,qu,nt,sp,di,co,us]=res.valueRanges.map(v=>v.values||[]);
-  DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||"",distributor:r[9]||""}));
+  DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||"",distributor:r[9]||"",
+    companies:(r[10]||"").split(",").filter(Boolean),costs:(()=>{try{return JSON.parse(r[11]||"{}")}catch(e){return {}}})()}));
   DB.projects=pr.filter(r=>r[0]).map(r=>{
     let sig={}; try{sig=JSON.parse(r[6]||"{}")}catch(e){}
     return {id:r[0],name:r[1]||"",location:r[2]||"",client:r[3]||"",created:r[4]||"",summaryNotes:r[5]||"",
@@ -404,7 +405,7 @@ async function loadAll(){
   });
   DB.templates=nt.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",content:r[2]||""}));
   DB.sigPresets=(sp||[]).filter(r=>r[0]).map(r=>{let j={};try{j=JSON.parse(r[2]||"{}")}catch(e){} return {id:r[0],name:r[1]||"",...j};});
-  DB.distributors=(di||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",contact:r[2]||"",phone:r[3]||"",email:r[4]||"",address:r[5]||"",notes:r[6]||""}));
+  DB.distributors=(di||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",contact:r[2]||"",phone:r[3]||"",email:r[4]||"",address:r[5]||"",notes:r[6]||"",companies:(r[7]||"").split(",").filter(Boolean)}));
   DB.companies=(co||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",tagline:r[2]||"",address:r[3]||"",contact:r[4]||"",bank:r[5]||""}));
   DB.users=(us||[]).filter(r=>r[0]).map(r=>({id:r[0],email:r[1]||"",roles:(r[2]||"").split(",").filter(Boolean),companies:(r[3]||"").split(",").filter(Boolean),locked:r[4]==="TRUE"}));
 }
@@ -414,12 +415,12 @@ async function saveTab(tab,rows){
     await api(`/values/${encodeURIComponent(tab)}!A2?valueInputOption=RAW`,{method:"PUT",body:JSON.stringify({values:rows})});
   }
 }
-const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||"",e.distributor||""]));
+const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||"",e.distributor||"",(e.companies||[]).join(","),JSON.stringify(e.costs||{})]));
 const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||"",JSON.stringify(p.sig||{}),p.companyId||""]));
 const saveSigPresets=()=>saveTab("SignaturePresets",DB.sigPresets.map(t=>[t.id,t.name,JSON.stringify({prepName:t.prepName||"",prepTitle:t.prepTitle||"",apprName:t.apprName||"",apprCompany:t.apprCompany||""})]));
 const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0},extra:q.extra||{}}),new Date().toISOString()]));
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
-const saveDistributors=()=>saveTab("Distributors",DB.distributors.map(d=>[d.id,d.name,d.contact,d.phone,d.email,d.address,d.notes]));
+const saveDistributors=()=>saveTab("Distributors",DB.distributors.map(d=>[d.id,d.name,d.contact,d.phone,d.email,d.address,d.notes,(d.companies||[]).join(",")]));
 const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.tagline,c.address,c.contact,c.bank]));
 const saveUsers=()=>saveTab("Users",DB.users.map(u=>[u.id,u.email,u.roles.join(","),u.companies.join(","),u.locked?"TRUE":"FALSE"]));
 async function persist(fn,msg){
@@ -453,6 +454,10 @@ const can=k=>!CURRENT_USER||(PERMS[k]||[]).some(r=>CURRENT_USER.roles.includes(r
 const allowedCompanyIds=()=>isAdmin()?DB.companies.map(c=>c.id):(CURRENT_USER?.companies||[]);
 const canSeeProject=p=>allowedCompanyIds().includes(p.companyId||DB.companies[0]?.id);
 const docPerm=k=>({quote:"quote",rap:"rap",invoice:"billing",receipt:"billing",po:"po",sj:"sj",mos:"ba",bap:"ba",bast:"ba"}[k||"quote"]);
+/* company-scoped catalogue: empty companies list = visible to ALL (legacy rows) */
+const visibleTo=(rec,cid)=>!(rec.companies&&rec.companies.length)||rec.companies.includes(cid);
+const costOf=(e,cid)=>{const v=Number(e.costs?.[cid]); return v>0?v:(Number(e.cost)||0);};
+const docCompanyId=q=>{const p=getProject(q.projectId); return p?.companyId||DB.companies[0]?.id;};
 const bapOverall=q=>{const sub=quoteSubtotal(q);return sub>0?q.sections.reduce((a,s)=>a+s.items.reduce((x,it)=>x+lineTotal(it)*(Number(it.prog)||0)/100,0),0)/sub*100:0;};
 const getDistributor=name=>DB.distributors.find(d=>d.name.trim().toLowerCase()===String(name||"").trim().toLowerCase());
 const KIND_LABEL={quote:"Quotation",rap:"RAP",invoice:"Invoice",receipt:"Receipt",po:"Purchase Order",sj:"Surat Jalan",mos:"Material on Site",bap:"BA Progress",bast:"BAST"};
@@ -628,6 +633,8 @@ function renderEquipmentTab(b){
       </select>
       <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:0 10px">
         <input type="checkbox" id="eqStaleOnly" onchange="renderEquipmentRows()"> ⚠ stale only</label>
+      ${isAdmin()?`<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:0 10px">
+        <input type="checkbox" id="eqAllCo" onchange="renderEquipmentRows()"> all companies</label>`:""}
       <button class="btn" onclick="eqSearch='';eqF={brand:'',series:'',description:'',category:'',unit:'',distributor:''};render()">Clear filters</button>
     </div>
     <div class="card" style="overflow-x:auto"><table class="grid" style="min-width:860px">
@@ -644,7 +651,9 @@ function renderEquipmentTab(b){
 function renderEquipmentRows(){
   const q=(eqSearch||"").toLowerCase(), cat=$("#eqCat")?.value||"";
   const staleOnly=$("#eqStaleOnly")?.checked;
+  const allCo=$("#eqAllCo")?.checked;
   const list=DB.equipment.filter(e=>
+    (allCo||visibleTo(e,ACTIVE_COMPANY))&&
     (!cat||e.category===cat)
     &&(!q||(e.brand+" "+e.series+" "+e.description+" "+e.category).toLowerCase().includes(q))
     &&["brand","series","description","category","unit","distributor"].every(k=>!eqF[k]||String(e[k]||"").toLowerCase().includes(eqF[k].toLowerCase()))
@@ -655,8 +664,8 @@ function renderEquipmentRows(){
     <td style="max-width:320px">${esc(e.description)}</td>
     <td>${e.category?`<span class="pill amber">${esc(e.category)}</span>`:""}</td>
     <td>${esc(e.unit)}</td><td class="t-right num">${fmtRp(e.price)}</td>
-    <td class="t-right num" style="color:var(--muted)">${e.cost?fmtRp(e.cost):"—"}</td>
-    <td style="font-size:12px">${esc(e.distributor||"—")}</td>
+    <td class="t-right num" style="color:var(--muted)">${costOf(e,ACTIVE_COMPANY)?fmtRp(costOf(e,ACTIVE_COMPANY)):"—"}</td>
+    <td style="font-size:12px">${esc(e.distributor||"—")}${isAdmin()&&e.companies?.length?`<br><span style="font-size:10.5px;color:var(--accent-dark)">${e.companies.map(id=>esc(DB.companies.find(c=>c.id===id)?.name.split(" ")[0]||"?")).join(" · ")}</span>`:""}</td>
     <td style="white-space:nowrap;font-size:12px">
       ${isStale(e)?`<span class="pill" style="background:var(--red-soft);color:var(--red)" title="Price not checked within the warning period — verify with supplier">⚠ ${ageLabel(e)}</span>`
         :`<span class="num" style="color:var(--muted)">${ageLabel(e)}</span>`}</td>
@@ -678,27 +687,54 @@ function openEquipmentModal(id){
       <div class="field"><label>Category</label><input id="m_cat" value="${esc(e?.category||"")}" list="catList" placeholder="Speaker / Mixer / …"></div>
       <div class="field"><label>Unit</label><input id="m_unit" value="${esc(e?.unit||"unit")}" placeholder="unit / pcs / lot / m"></div>
     </div>
-    <div class="field-row c2">
-      <div class="field"><label>Sell price (IDR) — used in quotations</label><input id="m_price" type="number" min="0" value="${e?.price||""}"></div>
-      <div class="field"><label>Budget / capital price (IDR) — used in RAP</label><input id="m_cost" type="number" min="0" value="${e?.cost||""}"></div>
-    </div>
+    <div class="field"><label>Sell price (IDR) — used in quotations, shared across companies</label><input id="m_price" type="number" min="0" value="${e?.price||""}"></div>
+    ${isAdmin()?`
+    <div class="field"><label>Visible / usable by companies — with each company's own budget price (IDR)</label>
+      <div style="display:grid;gap:8px">
+        ${DB.companies.map(c=>{
+          const on=e?(!e.companies?.length||e.companies.includes(c.id)):(c.id===ACTIVE_COMPANY);
+          return `<div style="display:flex;align-items:center;gap:10px;padding:6px 10px;border:1px solid var(--line);border-radius:8px">
+            <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer">
+              <input type="checkbox" class="eqco" value="${c.id}" ${on?"checked":""}>${esc(c.name)}</label>
+            <input type="number" min="0" class="eqco_cost" data-cid="${c.id}" placeholder="budget price"
+              value="${e?(e.costs?.[c.id]??e.cost??""):""}"
+              style="width:150px;border:1px solid var(--line);border-radius:6px;padding:5px 9px;text-align:right;font-family:var(--mono)">
+          </div>`;}).join("")}
+      </div></div>`
+    :`<div class="field"><label>Budget / capital price (IDR) for ${esc(DB.companies.find(c=>c.id===ACTIVE_COMPANY)?.name||"your company")} — used in RAP</label>
+      <input id="m_cost" type="number" min="0" value="${e?(e.costs?.[ACTIVE_COMPANY]??e.cost??""):""}"></div>`}
     <div class="field"><label>Distributor / place to buy</label>
       <input id="m_dist" value="${esc(e?.distributor||"")}" list="distList" placeholder="pick from Distributors tab or type freely">
-      <datalist id="distList">${DB.distributors.map(d=>`<option>${esc(d.name)}</option>`).join("")}</datalist></div>
+      <datalist id="distList">${DB.distributors.filter(d=>visibleTo(d,ACTIVE_COMPANY)).map(d=>`<option>${esc(d.name)}</option>`).join("")}</datalist></div>
     <datalist id="catList">${[...new Set(DB.equipment.map(x=>x.category).filter(Boolean))].map(c=>`<option>${esc(c)}</option>`).join("")}</datalist>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="saveEquipmentModal('${id||""}')">${e?"Save changes":"Add to database"}</button>`);
   $("#m_brand").focus();
 }
 async function saveEquipmentModal(id){
+  const e0=id?DB.equipment.find(x=>x.id===id):null;
   const rec={brand:$("#m_brand").value.trim(),series:$("#m_series").value.trim(),description:$("#m_desc").value.trim(),
-    category:$("#m_cat").value.trim(),unit:$("#m_unit").value.trim()||"unit",price:Number($("#m_price").value)||0,cost:Number($("#m_cost").value)||0,distributor:$("#m_dist").value.trim()};
+    category:$("#m_cat").value.trim(),unit:$("#m_unit").value.trim()||"unit",price:Number($("#m_price").value)||0,distributor:$("#m_dist").value.trim()};
   if(!rec.brand&&!rec.series&&!rec.description) return alert("Fill in at least a brand, series or description.");
-  if(id){
-    const e=DB.equipment.find(x=>x.id===id);
-    if(e.price!==rec.price||e.cost!==rec.cost) rec.priceUpdated=todayISO(); // price changed → stamp today
-    Object.assign(e,rec);
-  } else DB.equipment.unshift({id:uid(),...rec,priceUpdated:todayISO()});
+  if(isAdmin()){
+    rec.companies=[...document.querySelectorAll(".eqco:checked")].map(c=>c.value);
+    if(!rec.companies.length) return alert("Tick at least one company that can use this item.");
+    rec.costs={...(e0?.costs||{})};
+    document.querySelectorAll(".eqco_cost").forEach(inp=>{
+      const v=Number(inp.value)||0;
+      if(v>0) rec.costs[inp.dataset.cid]=v; else delete rec.costs[inp.dataset.cid];
+    });
+  }else{
+    rec.companies=e0?(e0.companies||[]).slice():[ACTIVE_COMPANY];
+    if(!rec.companies.length) rec.companies=[ACTIVE_COMPANY];
+    rec.costs={...(e0?.costs||{})};
+    const v=Number($("#m_cost").value)||0;
+    if(v>0) rec.costs[ACTIVE_COMPANY]=v; else delete rec.costs[ACTIVE_COMPANY];
+  }
+  if(e0){
+    if(e0.price!==rec.price||JSON.stringify(e0.costs||{})!==JSON.stringify(rec.costs)) rec.priceUpdated=todayISO();
+    Object.assign(e0,rec);
+  } else DB.equipment.unshift({id:uid(),...rec,cost:0,priceUpdated:todayISO()});
   closeModal(); render(); await persist(saveEquipment);
 }
 async function verifyPrice(id){
@@ -712,10 +748,11 @@ async function deleteEquipment(id){
 
 /* ================= DISTRIBUTORS TAB ================= */
 function renderDistributorsTab(b){
-  b.innerHTML=DB.distributors.length?`<div class="card" style="overflow-x:auto"><table class="grid" style="min-width:820px">
+  const list=DB.distributors.filter(d=>isAdmin()||visibleTo(d,ACTIVE_COMPANY));
+  b.innerHTML=list.length?`<div class="card" style="overflow-x:auto"><table class="grid" style="min-width:820px">
     <thead><tr><th>Distributor</th><th>Contact person</th><th>Phone</th><th>Email</th><th>Address</th><th>Notes</th><th></th></tr></thead>
-    <tbody>${DB.distributors.map(d=>`
-      <tr><td style="font-weight:600">${esc(d.name)}</td><td>${esc(d.contact)}</td>
+    <tbody>${list.map(d=>`
+      <tr><td style="font-weight:600">${esc(d.name)}${isAdmin()&&d.companies?.length?`<br><span style="font-size:10.5px;color:var(--accent-dark)">${d.companies.map(id=>esc(DB.companies.find(c=>c.id===id)?.name.split(" ")[0]||"?")).join(" · ")}</span>`:""}</td><td>${esc(d.contact)}</td>
       <td class="num" style="font-size:12.5px">${esc(d.phone)}</td><td style="font-size:12.5px">${esc(d.email)}</td>
       <td style="font-size:12.5px;color:var(--muted);max-width:240px">${esc(d.address)}</td>
       <td style="font-size:12.5px;color:var(--muted);max-width:180px">${esc(d.notes)}</td>
@@ -735,16 +772,28 @@ function openDistributorModal(id){
     </div>
     <div class="field"><label>Email</label><input id="m_demail" value="${esc(d?.email||"")}"></div>
     <div class="field"><label>Address</label><textarea id="m_daddr" rows="2">${esc(d?.address||"")}</textarea></div>
-    <div class="field"><label>Notes (payment terms, discount agreements…)</label><textarea id="m_dnotes" rows="2">${esc(d?.notes||"")}</textarea></div>`,
+    <div class="field"><label>Notes (payment terms, discount agreements…)</label><textarea id="m_dnotes" rows="2">${esc(d?.notes||"")}</textarea></div>
+    ${isAdmin()?`<div class="field"><label>Visible / usable by companies</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        ${DB.companies.map(c=>{
+          const on=d?(!d.companies?.length||d.companies.includes(c.id)):(c.id===ACTIVE_COMPANY);
+          return `<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer">
+            <input type="checkbox" class="dico" value="${c.id}" ${on?"checked":""}>${esc(c.name)}</label>`;}).join("")}
+      </div></div>`:""}`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="saveDistributorModal('${id||""}')">${d?"Save changes":"Add distributor"}</button>`);
   $("#m_dname").focus();
 }
 async function saveDistributorModal(id){
+  const d0=id?DB.distributors.find(x=>x.id===id):null;
   const rec={name:$("#m_dname").value.trim(),contact:$("#m_dcontact").value.trim(),phone:$("#m_dphone").value.trim(),
     email:$("#m_demail").value.trim(),address:$("#m_daddr").value.trim(),notes:$("#m_dnotes").value.trim()};
   if(!rec.name) return alert("Distributor name is required.");
-  if(id){ Object.assign(DB.distributors.find(x=>x.id===id),rec); } else DB.distributors.unshift({id:uid(),...rec});
+  if(isAdmin()){
+    rec.companies=[...document.querySelectorAll(".dico:checked")].map(c=>c.value);
+    if(!rec.companies.length) return alert("Tick at least one company that can use this distributor.");
+  }else rec.companies=d0?(d0.companies||[]).slice():[ACTIVE_COMPANY];
+  if(d0){ Object.assign(d0,rec); } else DB.distributors.unshift({id:uid(),...rec});
   closeModal(); render(); await persist(saveDistributors);
 }
 async function deleteDistributor(id){
@@ -1334,7 +1383,7 @@ function openPOFromRAP(rapId){
     <div class="field"><label>Distributor / store (recipient of the PO)</label>
       <select id="po_dist">
         <option value="">— choose distributor —</option>
-        ${DB.distributors.map(d=>`<option value="${esc(d.name)}">${esc(d.name)}</option>`).join("")}
+        ${DB.distributors.filter(d=>visibleTo(d,docCompanyId(rap))).map(d=>`<option value="${esc(d.name)}">${esc(d.name)}</option>`).join("")}
       </select>
       <span style="font-size:11.5px;color:var(--muted)">Tip: the last column shows each item's distributor from the equipment database. Create one PO per distributor.</span></div>
     <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:8px"><input type="checkbox" id="po_merge"> Merge all sections into one list (no section headers on the PO)</label>
@@ -1391,10 +1440,11 @@ function openSummaryExport(pid){
 function deriveRAP(qid){
   const src=getQuote(qid);
   const total=src.sections.reduce((a,s)=>a+s.items.length,0);
+  const srcCid=docCompanyId(src);
   const dbHits=src.sections.reduce((a,s)=>a+s.items.filter(it=>{
     const e=DB.equipment.find(x=>x.brand.trim().toLowerCase()===String(it.brand).trim().toLowerCase()
       && x.series.trim().toLowerCase()===String(it.series).trim().toLowerCase());
-    return e&&e.cost>0;
+    return e&&costOf(e,srcCid)>0;
   }).length,0);
   openModal("Create RAP from “"+esc(src.title||src.quoteNumber||"Quotation")+"”",`
     <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
@@ -1423,10 +1473,11 @@ async function doDeriveRAP(qid){
   copy.title="RAP — "+(src.title||src.quoteNumber||"Quotation");
   copy.discount={type:"percent",value:0}; copy.extra={};
   let fromDB=0, fromPct=0, kept=0;
+  const cid=docCompanyId(src);
   copy.sections.forEach(sec=>sec.items.forEach(it=>{
     const e=(mode!=="pct")?DB.equipment.find(x=>x.brand.trim().toLowerCase()===String(it.brand).trim().toLowerCase()
       && x.series.trim().toLowerCase()===String(it.series).trim().toLowerCase()):null;
-    if(e&&e.cost>0){ it.price=e.cost; fromDB++; }
+    if(e&&costOf(e,cid)>0){ it.price=costOf(e,cid); fromDB++; }
     else if(mode==="db_keep"){ kept++; }
     else { it.price=Math.round((Number(it.price)||0)*pct); fromPct++; }
   }));
@@ -1498,7 +1549,7 @@ function renderQuote(v,q,p){
         <div class="field"><label>Distributor / store (PO recipient)</label>
           <select onchange="exSet('${q.id}','distributor',this.value)">
             <option value="">— choose distributor —</option>
-            ${DB.distributors.map(d=>`<option value="${esc(d.name)}" ${q.extra?.distributor===d.name?"selected":""}>${esc(d.name)}</option>`).join("")}
+            ${DB.distributors.filter(d=>visibleTo(d,docCompanyId(q))||q.extra?.distributor===d.name).map(d=>`<option value="${esc(d.name)}" ${q.extra?.distributor===d.name?"selected":""}>${esc(d.name)}</option>`).join("")}
           </select></div>
         <div class="field"><label>Ship to / delivery address</label><input value="${esc(q.extra?.shipTo||"")}" placeholder="e.g. project site or warehouse" onchange="exSet('${q.id}','shipTo',this.value)"></div>
       </div>`:""}
@@ -1856,20 +1907,22 @@ function openPicker(qid,si){
 }
 function renderPicker(){
   const q=($("#pkSearch")?.value||"").toLowerCase();
-  const list=DB.equipment.filter(e=>!q||(e.brand+" "+e.series+" "+e.description+" "+e.category).toLowerCase().includes(q)).slice(0,80);
+  const cid=docCompanyId(getQuote(pickerCtx.qid));
+  const list=DB.equipment.filter(e=>visibleTo(e,cid)&&(!q||(e.brand+" "+e.series+" "+e.description+" "+e.category).toLowerCase().includes(q))).slice(0,80);
   $("#pkRows").innerHTML=list.length?list.map(e=>`
     <tr><td style="font-weight:600;white-space:nowrap">${esc(e.brand)}</td><td style="white-space:nowrap">${esc(e.series)}</td>
     <td style="color:var(--muted);font-size:12.5px">${esc(e.description)}</td>
-    <td class="t-right num" style="white-space:nowrap">${isStale(e)?`<span title="Price last checked ${ageLabel(e)} — verify before quoting" style="color:var(--red);cursor:help">⚠ </span>`:""}${["rap","po"].includes(getQuote(pickerCtx.qid)?.kind)?(e.cost?fmtRp(e.cost):fmtRp(e.price)+" *"):fmtRp(e.price)}</td>
+    <td class="t-right num" style="white-space:nowrap">${isStale(e)?`<span title="Price last checked ${ageLabel(e)} — verify before quoting" style="color:var(--red);cursor:help">⚠ </span>`:""}${["rap","po"].includes(getQuote(pickerCtx.qid)?.kind)?(costOf(e,docCompanyId(getQuote(pickerCtx.qid)))?fmtRp(costOf(e,docCompanyId(getQuote(pickerCtx.qid)))):fmtRp(e.price)+" *"):fmtRp(e.price)}</td>
     <td class="t-right"><button class="btn small primary" onclick="pickItem('${e.id}')">Add</button></td></tr>`).join("")
   :`<tr><td style="padding:20px;text-align:center;color:var(--muted)">No matches in the equipment database.</td></tr>`;
 }
 function pickItem(eid){
   const e=DB.equipment.find(x=>x.id===eid), {qid,si}=pickerCtx;
   const q=getQuote(qid);
-  const price=(q.kind==="rap"||q.kind==="po")?(e.cost>0?e.cost:e.price):e.price;
+  const co=costOf(e,docCompanyId(q));
+  const price=(q.kind==="rap"||q.kind==="po")?(co>0?co:e.price):e.price;
   q.sections[si].items.push({brand:e.brand,series:e.series,description:e.description,qty:1,unit:e.unit||"unit",price});
-  setDirty(true); toast(e.brand+" "+e.series+" added"+((q.kind==="rap"||q.kind==="po")&&e.cost>0?" (budget price)":""));
+  setDirty(true); toast(e.brand+" "+e.series+" added"+((q.kind==="rap"||q.kind==="po")&&co>0?" (budget price)":""));
   render(); // re-render page behind modal
 }
 
