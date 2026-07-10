@@ -449,7 +449,7 @@ let ACTIVE_COMPANY=null; // company issuer chosen after login
 const ROLE_LABEL={admin:"Administrator",engineer:"Engineer",adminproject:"Admin Project",finance:"Finance",purchasing:"Purchasing"};
 const PERMS={
   equipment:["admin","purchasing"], distributors:["admin","purchasing"],
-  templates:["admin","adminproject"], companies:["admin"], users:["admin"], clients:["admin","adminproject"],
+  templates:["admin","adminproject"], companies:["admin"], users:["admin"], clients:["admin","adminproject"], dashboard:["admin","finance","purchasing"],
   quote:["admin","engineer","adminproject"], rap:["admin","adminproject","purchasing"],
   billing:["admin","finance"], po:["admin","purchasing"], sj:["admin","adminproject","purchasing"], ba:["admin","adminproject"], manage:["admin","adminproject"]
 };
@@ -539,7 +539,7 @@ function selectCompany(id){
 
 /* ================= HOME ================= */
 function renderHome(v){
-  const tabPerm={projects:null,equipment:"equipment",distributors:"distributors",templates:"templates",companies:"companies",users:"users",clients:"clients"};
+  const tabPerm={projects:null,equipment:"equipment",distributors:"distributors",templates:"templates",companies:"companies",users:"users",clients:"clients",dashboard:"dashboard"};
   if(tabPerm[route.tab]&&!can(tabPerm[route.tab])) route.tab="projects";
   const tab=route.tab;
   v.innerHTML=`
@@ -549,6 +549,7 @@ function renderHome(v){
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" onclick="reloadData()">↻ Reload</button>
         ${tab==="projects"?(can("manage")?`<button class="btn primary" onclick="openProjectModal()">+ New project</button>`:"")
+         :tab==="dashboard"?""
          :tab==="equipment"?`<button class="btn primary" onclick="openEquipmentModal()">+ Add equipment</button>`
          :tab==="distributors"?`<button class="btn primary" onclick="openDistributorModal()">+ Add distributor</button>`
          :tab==="companies"?`<button class="btn primary" onclick="openCompanyModal()">+ Add company</button>`
@@ -559,6 +560,7 @@ function renderHome(v){
     </div>
     <div class="tabs">
       <button class="tab ${tab==="projects"?"active":""}" onclick="route.tab='projects';render()">Projects</button>
+      ${can("dashboard")?`<button class="tab ${tab==="dashboard"?"active":""}" onclick="route.tab='dashboard';render()">📊 Dashboard</button>`:""}
       ${can("equipment")?`<button class="tab ${tab==="equipment"?"active":""}" onclick="route.tab='equipment';render()">Equipment</button>`:""}
       ${can("clients")?`<button class="tab ${tab==="clients"?"active":""}" onclick="route.tab='clients';render()">Clients</button>`:""}
       ${can("distributors")?`<button class="tab ${tab==="distributors"?"active":""}" onclick="route.tab='distributors';render()">Distributors</button>`:""}
@@ -574,6 +576,7 @@ function renderHome(v){
   else if(tab==="companies") renderCompaniesTab(b);
   else if(tab==="users") renderUsersTab(b);
   else if(tab==="clients") renderClientsTab(b);
+  else if(tab==="dashboard") renderDashboardTab(b);
   else renderTemplatesTab(b);
 }
 async function reloadData(){ try{ await loadAll(); render(); toast("Data reloaded from Sheet"); }catch(e){ alert(e.message); } }
@@ -788,6 +791,125 @@ async function verifyPrice(id){
 async function deleteEquipment(id){
   if(!confirm("Delete this item from the equipment database?")) return;
   DB.equipment=DB.equipment.filter(x=>x.id!==id); render(); await persist(saveEquipment,"Equipment deleted");
+}
+
+/* ================= FINANCIAL DASHBOARD ================= */
+let dashYear=new Date().getFullYear();
+const fmtRpShort=n=>{n=Number(n)||0;const a=Math.abs(n);
+  if(a>=1e9)return (n/1e9).toLocaleString("id-ID",{maximumFractionDigits:1})+" M";
+  if(a>=1e6)return (n/1e6).toLocaleString("id-ID",{maximumFractionDigits:1})+" jt";
+  if(a>=1e3)return (n/1e3).toLocaleString("id-ID",{maximumFractionDigits:0})+" rb";
+  return String(Math.round(n));};
+function renderDashboardTab(b){
+  const co=DB.companies.find(c=>c.id===ACTIVE_COMPANY);
+  const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY);
+  const pids=new Set(projs.map(p=>p.id));
+  const docs=k=>DB.quotations.filter(q=>pids.has(q.projectId)&&(q.kind||"quote")===k);
+  const quotes=docs("quote"), invs=docs("invoice"), recs=docs("receipt"), pos=docs("po"), raps=docs("rap");
+  // KPIs
+  const pipeline=quotes.reduce((a,q)=>a+quoteGrand(q),0);
+  const invoiced=invs.reduce((a,q)=>a+quoteGrand(q),0);
+  const received=recs.reduce((a,q)=>a+(Number(q.extra?.amount)||0),0);
+  const receivable=projs.reduce((a,p)=>{
+    const bi=invs.filter(q=>q.projectId===p.id).reduce((x,q)=>x+quoteGrand(q),0);
+    const br=recs.filter(q=>q.projectId===p.id).reduce((x,q)=>x+(Number(q.extra?.amount)||0),0);
+    return a+Math.max(0,bi-br);},0);
+  const poTotal=pos.reduce((a,q)=>a+quoteGrand(q),0);
+  const payable=pos.filter(q=>!q.extra?.paid).reduce((a,q)=>a+quoteGrand(q),0);
+  const kpi=(label,val,color,sub)=>`<div class="card card-pad" style="flex:1;min-width:160px">
+    <div class="eyebrow" style="color:${color||"var(--accent)"}">${label}</div>
+    <div class="num" style="font-size:21px;font-weight:800;margin-top:4px" title="${fmtRp(val)}">${fmtRpShort(val)}</div>
+    ${sub?`<div style="font-size:11.5px;color:var(--muted)">${sub}</div>`:""}</div>`;
+  // years present in data
+  const years=[...new Set([dashYear,new Date().getFullYear(),
+    ...recs.map(r=>r.date),...pos.map(p=>p.extra?.paidDate)].filter(Boolean).map(d=>typeof d==="number"?d:Number(String(d).slice(0,4))).filter(y=>y>2000))].sort();
+  // monthly cash flow
+  const inM=Array(12).fill(0), outM=Array(12).fill(0);
+  recs.forEach(r=>{ if(r.date&&r.date.startsWith(dashYear)) inM[Number(r.date.slice(5,7))-1]+=(Number(r.extra?.amount)||0); });
+  pos.forEach(o=>{ const d=o.extra?.paidDate; if(o.extra?.paid&&d&&String(d).startsWith(dashYear)) outM[Number(String(d).slice(5,7))-1]+=quoteGrand(o); });
+  const maxV=Math.max(1,...inM,...outM);
+  const months=["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+  const bars=months.map((m,i)=>`
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0">
+      <div style="display:flex;align-items:flex-end;gap:3px;height:120px">
+        <div title="In ${m}: ${fmtRp(inM[i])}" style="width:12px;border-radius:3px 3px 0 0;background:var(--accent);height:${Math.round(inM[i]/maxV*116)+2}px"></div>
+        <div title="Out ${m}: ${fmtRp(outM[i])}" style="width:12px;border-radius:3px 3px 0 0;background:var(--amber);height:${Math.round(outM[i]/maxV*116)+2}px"></div>
+      </div>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--muted)">${m}</div>
+      <div class="num" style="font-size:9.5px;color:${inM[i]-outM[i]>=0?"var(--accent-dark)":"var(--red)"}">${(inM[i]||outM[i])?fmtRpShort(inM[i]-outM[i]):""}</div>
+    </div>`).join("");
+  // receivables table
+  const recvRows=projs.map(p=>{
+    const bi=invs.filter(q=>q.projectId===p.id).reduce((x,q)=>x+quoteGrand(q),0);
+    const br=recs.filter(q=>q.projectId===p.id).reduce((x,q)=>x+(Number(q.extra?.amount)||0),0);
+    return {p,bi,br,out:bi-br};
+  }).filter(x=>x.out>0).sort((a,b)=>b.out-a.out);
+  // payables (unpaid POs)
+  const payRows=pos.filter(q=>!q.extra?.paid).sort((a,b)=>quoteGrand(b)-quoteGrand(a));
+  // profitability per project
+  const profRows=projs.map(p=>{
+    const g=k=>docs(k).filter(q=>q.projectId===p.id).reduce((x,q)=>x+quoteGrand(q),0);
+    return {p,q:g("quote"),r:g("rap"),o:g("po")};
+  }).filter(x=>x.q||x.r||x.o).sort((a,b)=>b.q-a.q);
+  b.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+      <span class="eyebrow">Financials of <strong>${esc(co?.name||"—")}</strong> · ${projs.length} project${projs.length===1?"":"s"}</span>
+      <select onchange="dashYear=Number(this.value);render()" style="border:1px solid var(--line);border-radius:8px;padding:7px 10px">
+        ${years.map(y=>`<option ${y===dashYear?"selected":""}>${y}</option>`).join("")}
+      </select>
+    </div>
+
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">
+      ${kpi("Pipeline (quotations)",pipeline,"var(--accent)",quotes.length+" quotation(s)")}
+      ${kpi("Invoiced",invoiced,"var(--accent)",invs.length+" invoice(s)")}
+      ${kpi("Received",received,"var(--accent-dark)",recs.length+" receipt(s)")}
+      ${kpi("Receivables outstanding",receivable,"var(--red)","invoiced − received")}
+      ${kpi("Purchasing (PO)",poTotal,"var(--amber)",pos.length+" PO(s)")}
+      ${kpi("Payables (unpaid PO)",payable,"var(--red)",pos.filter(q=>!q.extra?.paid).length+" unpaid")}
+    </div>
+
+    <div class="card card-pad" style="margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+        <span class="eyebrow">Cash flow ${dashYear} — <span style="color:var(--accent)">■ in (receipts)</span> · <span style="color:var(--amber)">■ out (paid POs)</span> · net below</span>
+        <span class="num" style="font-weight:700;color:${inM.reduce((a,x)=>a+x,0)-outM.reduce((a,x)=>a+x,0)>=0?"var(--accent-dark)":"var(--red)"}">Net ${fmtRpShort(inM.reduce((a,x)=>a+x,0)-outM.reduce((a,x)=>a+x,0))}</span>
+      </div>
+      <div style="display:flex;gap:4px;overflow-x:auto">${bars}</div>
+    </div>
+
+    <div style="display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-bottom:20px">
+      <div class="card"><div class="card-pad" style="padding-bottom:8px"><span class="eyebrow" style="color:var(--red)">Receivables — who owes us</span></div>
+        <table class="grid"><thead><tr><th>Project</th><th class="t-right">Invoiced</th><th class="t-right">Received</th><th class="t-right">Outstanding</th></tr></thead>
+        <tbody>${recvRows.length?recvRows.map(x=>`
+          <tr class="rowlink" onclick="route.ptab='billing';go({view:'project',projectId:'${x.p.id}'})">
+            <td style="font-weight:600">${esc(x.p.name)}<br><span style="font-size:11px;color:var(--muted)">${esc(x.p.client||"")}</span></td>
+            <td class="t-right num">${fmtRpShort(x.bi)}</td><td class="t-right num">${fmtRpShort(x.br)}</td>
+            <td class="t-right num" style="font-weight:700;color:var(--red)">${fmtRp(x.out)}</td></tr>`).join("")
+        :'<tr><td colspan="4"><div class="empty">Nothing outstanding — all invoices covered by receipts 🎉</div></td></tr>'}</tbody></table></div>
+      <div class="card"><div class="card-pad" style="padding-bottom:8px"><span class="eyebrow" style="color:var(--amber)">Payables — unpaid POs</span></div>
+        <table class="grid"><thead><tr><th>PO</th><th>Distributor</th><th class="t-right">Amount</th></tr></thead>
+        <tbody>${payRows.length?payRows.map(q=>`
+          <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
+            <td style="font-weight:600">${esc(q.quoteNumber||q.title)}<br><span style="font-size:11px;color:var(--muted)">${esc(getProject(q.projectId)?.name||"")} · ${fmtDate(q.date)}</span></td>
+            <td style="font-size:12.5px">${esc(q.extra?.distributor||"—")}</td>
+            <td class="t-right num" style="font-weight:700">${fmtRp(quoteGrand(q))}</td></tr>`).join("")
+        :'<tr><td colspan="3"><div class="empty">No unpaid purchase orders 🎉</div></td></tr>'}</tbody></table></div>
+    </div>
+
+    <div class="card">
+      <div class="card-pad" style="padding-bottom:8px"><span class="eyebrow">Project profitability — quotation vs RAP vs actual PO spend</span></div>
+      <div style="overflow-x:auto"><table class="grid" style="min-width:760px">
+        <thead><tr><th>Project</th><th class="t-right">Quotation</th><th class="t-right">RAP (budget)</th><th class="t-right">PO actual</th><th class="t-right">Est. margin (Q−RAP)</th><th class="t-right">Actual margin (Q−PO)</th></tr></thead>
+        <tbody>${profRows.length?profRows.map(x=>`
+          <tr class="rowlink" onclick="go({view:'project',projectId:'${x.p.id}'})">
+            <td style="font-weight:600">${esc(x.p.name)}</td>
+            <td class="t-right num">${x.q?fmtRpShort(x.q):"—"}</td>
+            <td class="t-right num" style="color:var(--amber)">${x.r?fmtRpShort(x.r):"—"}</td>
+            <td class="t-right num">${x.o?fmtRpShort(x.o):"—"}</td>
+            <td class="t-right num" style="color:${x.q-x.r>=0?"var(--accent-dark)":"var(--red)"}">${(x.q&&x.r)?fmtRpShort(x.q-x.r):"—"}</td>
+            <td class="t-right num" style="font-weight:700;color:${x.q-x.o>=0?"var(--accent-dark)":"var(--red)"}">${(x.q&&x.o)?fmtRpShort(x.q-x.o):"—"}</td></tr>`).join("")
+        :'<tr><td colspan="6"><div class="empty">No financial documents yet in this company.</div></td></tr>'}</tbody></table></div>
+    </div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:10px">Hover any figure for the exact amount. Cash in = receipts by receipt date · cash out = POs by payment date · receivables = invoiced − received per project · actual margin compares quotation value to committed PO spend.</p>`;
 }
 
 /* ================= CLIENTS TAB ================= */
