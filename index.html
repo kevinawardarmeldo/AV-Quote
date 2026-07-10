@@ -1257,7 +1257,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")} ${q.extra?.termin?`<span class="pill amber">${esc(q.extra.termin)}</span>`:""}</td>
+        <td>${esc(q.title||"Untitled")} ${q.extra?.termin?`<span class="pill amber">${esc(q.extra.termin)}</span>`:""}${finalPill(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         <td style="font-size:12.5px">${esc(q.extra?.refQuote||"—")}</td>
         <td class="t-right num">${fmtRp(quoteSubtotal(q))}</td>
@@ -1270,7 +1270,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")}</td>
+        <td>${esc(q.title||"Untitled")}${finalPill(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         <td style="font-size:12.5px">${esc([...bastRefList(q),q.extra?.spkNo].filter(Boolean).join(" · ")||"—")}</td>
         <td class="t-right" style="white-space:nowrap">${docRowActions(q,kind)}</td>
@@ -1281,7 +1281,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")}</td>
+        <td>${esc(q.title||"Untitled")}${finalPill(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         <td style="font-size:12.5px">${esc(q.extra?.refQuote||"—")}</td>
         <td class="t-right num">${q.sections.reduce((a,s)=>a+s.items.length,0)}</td>
@@ -1293,7 +1293,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")}</td>
+        <td>${esc(q.title||"Untitled")}${finalPill(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         <td style="font-size:12.5px">${esc(q.extra?.refQuote||"—")}</td>
         <td style="font-size:12.5px;color:var(--muted)">${esc(q.extra?.shipTo||"—")}</td>
@@ -1306,7 +1306,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")}</td>
+        <td>${esc(q.title||"Untitled")}${finalPill(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         ${kind==="po"?`<td>${esc(q.extra?.distributor||"—")}</td><td>${q.extra?.paid?`<span class="pill" title="${esc(q.extra?.payMethod||"")} ${esc(q.extra?.payBank||"")}">paid ${q.extra?.paidDate?fmtDate(q.extra.paidDate):""}</span>`:'<span class="pill amber">unpaid</span>'}</td>`:""}
         ${kind!=="receipt"?`
@@ -1762,10 +1762,13 @@ async function doDeriveRAP(qid){
 async function duplicateQuote(id){
   const q=getQuote(id);
   const copy=JSON.parse(JSON.stringify(q)); copy.id=uid(); copy.title=(q.title||KIND_LABEL[q.kind||"quote"])+" (copy)"; copy.quoteNumber="";
+  if(copy.extra){ delete copy.extra.final; delete copy.extra.finalDate; delete copy.extra.finalBy; }
   DB.quotations.push(copy); render(); await persist(saveQuotes,"Duplicated");
 }
 async function deleteQuote(id){
-  if(!confirm("Delete this document? It will also be removed from the Google Sheet.")) return;
+  const q=getQuote(id);
+  if(q?.extra?.final&&!confirm("⚠ This document is marked FINAL (sent/approved externally). Are you sure you want to DELETE it?")) return;
+  if(!q?.extra?.final&&!confirm("Delete this document? It will also be removed from the Google Sheet.")) return;
   DB.quotations=DB.quotations.filter(q=>q.id!==id); render(); await persist(saveQuotes,"Deleted");
 }
 /* ================= QUOTATION EDITOR ================= */
@@ -1785,9 +1788,12 @@ function renderQuote(v,q,p){
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${!["sj","mos"].includes(q.kind)?`<button class="btn" onclick="exportQuoteXlsx('${q.id}')">⤓ Excel</button>`:""}
         <button class="btn" onclick="printQuote('${q.id}')">⤓ PDF</button>
+        <button class="btn ${q.extra?.final?"dark":""}" onclick="toggleFinal('${q.id}')">${q.extra?.final?"🔒 Final":"✓ Mark final"}</button>
         <button class="btn primary" onclick="persist(saveQuotes)">Save</button>
       </div>
     </div>
+    ${q.extra?.final?`<div style="background:var(--ink);color:#DCE8E0;border-radius:8px;padding:9px 14px;margin-bottom:16px;font-size:12.5px">
+      🔒 <strong>FINAL</strong> — marked ${fmtDate(q.extra.finalDate)} by ${esc(q.extra.finalBy||"")}. Sent / approved externally; editing is locked. Duplicate to create a new revision, or unlock via the Final button.</div>`:""}
 
     <div class="card card-pad" style="margin-bottom:22px">
       <div class="field-row c3">
@@ -1936,9 +1942,24 @@ function sectionHTML(q,s,si){
   </div>`;
 }
 /* quote mutators */
-function qSet(id,k,v){ getQuote(id)[k]=v; setDirty(true); render(); }
-function qSetSilent(id,k,v){ getQuote(id)[k]=v; setDirty(true); }
-function exSet(id,k,v){ const q=getQuote(id); q.extra=q.extra||{}; q.extra[k]=v; setDirty(true); }
+function qSet(id,k,v){ if(finalGuard(id))return; getQuote(id)[k]=v; setDirty(true); render(); }
+function qSetSilent(id,k,v){ if(finalGuard(id))return; getQuote(id)[k]=v; setDirty(true); }
+const PAY_KEYS=new Set(["paid","paidDate","payMethod","payBank","payNo","payName"]); // payment info stays editable on final POs
+function finalGuard(id){ const q=getQuote(id); if(q?.extra?.final){ toast("🔒 Final document — unlock (Final button) to edit"); return true; } return false; }
+const finalPill=q=>q.extra?.final?' <span class="pill" style="background:var(--ink);color:#fff" title="Sent / approved externally">FINAL</span>':"";
+async function toggleFinal(qid){
+  const q=getQuote(qid);
+  q.extra=q.extra||{};
+  if(q.extra.final){
+    if(!confirm("Unlock this FINAL document for editing? Only do this if it was NOT yet sent/approved, or you'll create a version that differs from what the external party has.")) return;
+    q.extra.final=false;
+  }else{
+    q.extra.final=true; q.extra.finalDate=todayISO(); q.extra.finalBy=userEmail;
+  }
+  render();
+  await persist(saveQuotes,q.extra.final?"Marked FINAL — editing locked":"Unlocked for editing");
+}
+function exSet(id,k,v){ const q=getQuote(id); if(q?.extra?.final&&!PAY_KEYS.has(k)){ toast("🔒 Final document — unlock to edit"); render(); return; } q.extra=q.extra||{}; q.extra[k]=v; setDirty(true); }
 function poSetPaid(id,on){
   const q=getQuote(id); q.extra=q.extra||{};
   q.extra.paid=on;
@@ -1964,26 +1985,27 @@ async function saveAccountToDistributor(qid){
   d.bankAccounts.push(acc);
   await persist(saveDistributors,"Account saved to "+d.name); render();
 }
-function setDiscount(id,k,v){ const q=getQuote(id); q.discount=q.discount||{type:"percent",value:0}; q.discount[k]=v; setDirty(true); render(); }
-function addSection(id){ getQuote(id).sections.push({name:"New Section",items:[]}); setDirty(true); render(); }
+function setDiscount(id,k,v){ if(finalGuard(id))return; const q=getQuote(id); q.discount=q.discount||{type:"percent",value:0}; q.discount[k]=v; setDirty(true); render(); }
+function addSection(id){ if(finalGuard(id))return; getQuote(id).sections.push({name:"New Section",items:[]}); setDirty(true); render(); }
 function mergeSections(id){
-  const q=getQuote(id);
+  if(finalGuard(id))return; const q=getQuote(id);
   if(q.sections.length<2) return;
   if(!confirm("Merge all "+q.sections.length+" sections into one? Item order is kept; section headers are removed.")) return;
   const name=q.kind==="po"?"Order Items":"Delivered Items";
   q.sections=[{name,items:q.sections.flatMap(x=>x.items)}];
   setDirty(true); render(); toast("Sections merged — rename the section if you like");
 }
-function renameSection(id,si,v){ getQuote(id).sections[si].name=v; setDirty(true); }
-function removeSection(id,si){ const q=getQuote(id); if(q.sections[si].items.length&&!confirm("Delete this section and its "+q.sections[si].items.length+" line(s)?"))return; q.sections.splice(si,1); setDirty(true); render(); }
-function moveSection(id,si,d){ const q=getQuote(id),j=si+d; if(j<0||j>=q.sections.length)return; [q.sections[si],q.sections[j]]=[q.sections[j],q.sections[si]]; setDirty(true); render(); }
-function itemSet(id,si,ii,k,v){ getQuote(id).sections[si].items[ii][k]=v; setDirty(true); render(); }
-function addManualItem(id,si){ getQuote(id).sections[si].items.push({brand:"",series:"",description:"",qty:1,unit:"unit",price:0}); setDirty(true); render(); }
-function removeItem(id,si,ii){ getQuote(id).sections[si].items.splice(ii,1); setDirty(true); render(); }
-function moveItem(id,si,ii,d){ const a=getQuote(id).sections[si].items,j=ii+d; if(j<0||j>=a.length)return; [a[ii],a[j]]=[a[j],a[ii]]; setDirty(true); render(); }
+function renameSection(id,si,v){ if(finalGuard(id))return; getQuote(id).sections[si].name=v; setDirty(true); }
+function removeSection(id,si){ if(finalGuard(id))return; const q=getQuote(id); if(q.sections[si].items.length&&!confirm("Delete this section and its "+q.sections[si].items.length+" line(s)?"))return; q.sections.splice(si,1); setDirty(true); render(); }
+function moveSection(id,si,d){ if(finalGuard(id))return; const q=getQuote(id),j=si+d; if(j<0||j>=q.sections.length)return; [q.sections[si],q.sections[j]]=[q.sections[j],q.sections[si]]; setDirty(true); render(); }
+function itemSet(id,si,ii,k,v){ if(finalGuard(id))return; getQuote(id).sections[si].items[ii][k]=v; setDirty(true); render(); }
+function addManualItem(id,si){ if(finalGuard(id))return; getQuote(id).sections[si].items.push({brand:"",series:"",description:"",qty:1,unit:"unit",price:0}); setDirty(true); render(); }
+function removeItem(id,si,ii){ if(finalGuard(id))return; getQuote(id).sections[si].items.splice(ii,1); setDirty(true); render(); }
+function moveItem(id,si,ii,d){ if(finalGuard(id))return; const a=getQuote(id).sections[si].items,j=ii+d; if(j<0||j>=a.length)return; [a[ii],a[j]]=[a[j],a[ii]]; setDirty(true); render(); }
 
 /* templates in notes */
 function insertTemplate(qid){
+  if(finalGuard(qid))return;
   const tid=$("#tplSelect").value; if(!tid) return;
   const t=DB.templates.find(x=>x.id===tid), q=getQuote(qid);
   q.notes=(q.notes?q.notes+"\n\n":"")+t.content; setDirty(true); render();
@@ -2038,6 +2060,7 @@ function openInvoiceImport(invId){
   $("#inv_mode").addEventListener("change",e=>{ $("#inv_pct_wrap").style.display=e.target.value==="pct"?"flex":"none"; });
 }
 function doInvoiceImport(invId){
+  if(finalGuard(invId)){closeModal();return;}
   const inv=getQuote(invId), src=getQuote($("#inv_src").value);
   const mode=$("#inv_mode").value;
   if(mode==="full"){
@@ -2064,6 +2087,7 @@ function renderReceipt(v,q,p){
         <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(480px,80vw)" value="${esc(q.title)}" onchange="qSet('${q.id}','title',this.value)"></h1>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ${q.extra?.final?"dark":""}" onclick="toggleFinal('${q.id}')">${q.extra?.final?"🔒 Final":"✓ Mark final"}</button>
         <button class="btn" onclick="printReceipt('${q.id}')">⤓ PDF</button>
         <button class="btn primary" onclick="persist(saveQuotes)">Save</button>
       </div>
@@ -2121,6 +2145,7 @@ function renderBAP(v,q,p){
         <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(520px,80vw)" value="${esc(q.title)}" onchange="qSet('${q.id}','title',this.value)"></h1>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ${q.extra?.final?"dark":""}" onclick="toggleFinal('${q.id}')">${q.extra?.final?"🔒 Final":"✓ Mark final"}</button>
         <button class="btn" onclick="printBAP('${q.id}')">⤓ PDF</button>
         <button class="btn primary" onclick="persist(saveQuotes)">Save</button>
       </div>
@@ -2166,6 +2191,7 @@ function renderBAST(v,q,p){
         <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(520px,80vw)" value="${esc(q.title)}" onchange="qSet('${q.id}','title',this.value)"></h1>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ${q.extra?.final?"dark":""}" onclick="toggleFinal('${q.id}')">${q.extra?.final?"🔒 Final":"✓ Mark final"}</button>
         <button class="btn" onclick="printBAST('${q.id}')">⤓ PDF</button>
         <button class="btn primary" onclick="persist(saveQuotes)">Save</button>
       </div>
@@ -2243,6 +2269,7 @@ function openPriceRefresh(qid){
      <button class="btn primary" onclick="doPriceRefresh('${qid}')">Update prices</button>`);
 }
 function doPriceRefresh(qid){
+  if(finalGuard(qid)){closeModal();return;}
   const q=getQuote(qid);
   const scope=$("#pr_scope").value, withDesc=$("#pr_desc").checked;
   const cid=docCompanyId(q);
@@ -2293,7 +2320,9 @@ function renderPicker(){
   :`<tr><td style="padding:20px;text-align:center;color:var(--muted)">No matches in the equipment database.</td></tr>`;
 }
 function pickItem(eid){
-  const e=DB.equipment.find(x=>x.id===eid), {qid,si}=pickerCtx;
+  const {qid,si}=pickerCtx;
+  if(finalGuard(qid))return;
+  const e=DB.equipment.find(x=>x.id===eid);
   const q=getQuote(qid);
   const cid=docCompanyId(q), co=costOf(e,cid), sp=priceOf(e,cid);
   const price=(q.kind==="rap"||q.kind==="po")?(co>0?co:sp):sp;
