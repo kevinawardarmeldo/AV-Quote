@@ -250,7 +250,7 @@ const CONFIG = {
 { const m=CONFIG.SPREADSHEET_ID.match(/\/d\/([A-Za-z0-9_-]{20,})/); if(m) CONFIG.SPREADSHEET_ID=m[1]; }
 
 const SHEETS = {
-  Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price","Price Updated","Distributor","Companies","Budget Prices"],
+  Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price","Price Updated","Distributor","Companies","Budget Prices","Sell Prices"],
   Projects:     ["ID","Name","Location","Client","Created","Summary Notes","Signature","Company ID"],
   Quotations:   ["ID","ProjectID","QuoteNumber","Title","Date","Tax","DataJSON","Updated"],
   NoteTemplates:["ID","Name","Content"],
@@ -390,7 +390,8 @@ async function loadAll(){
   const res=await api("/values:batchGet?"+ranges);
   const [eq,pr,qu,nt,sp,di,co,us]=res.valueRanges.map(v=>v.values||[]);
   DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||"",distributor:r[9]||"",
-    companies:(r[10]||"").split(",").filter(Boolean),costs:(()=>{try{return JSON.parse(r[11]||"{}")}catch(e){return {}}})()}));
+    companies:(r[10]||"").split(",").filter(Boolean),costs:(()=>{try{return JSON.parse(r[11]||"{}")}catch(e){return {}}})(),
+    prices:(()=>{try{return JSON.parse(r[12]||"{}")}catch(e){return {}}})()}));
   DB.projects=pr.filter(r=>r[0]).map(r=>{
     let sig={}; try{sig=JSON.parse(r[6]||"{}")}catch(e){}
     return {id:r[0],name:r[1]||"",location:r[2]||"",client:r[3]||"",created:r[4]||"",summaryNotes:r[5]||"",
@@ -415,7 +416,7 @@ async function saveTab(tab,rows){
     await api(`/values/${encodeURIComponent(tab)}!A2?valueInputOption=RAW`,{method:"PUT",body:JSON.stringify({values:rows})});
   }
 }
-const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||"",e.distributor||"",(e.companies||[]).join(","),JSON.stringify(e.costs||{})]));
+const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||"",e.distributor||"",(e.companies||[]).join(","),JSON.stringify(e.costs||{}),JSON.stringify(e.prices||{})]));
 const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||"",JSON.stringify(p.sig||{}),p.companyId||""]));
 const saveSigPresets=()=>saveTab("SignaturePresets",DB.sigPresets.map(t=>[t.id,t.name,JSON.stringify({prepName:t.prepName||"",prepTitle:t.prepTitle||"",apprName:t.apprName||"",apprCompany:t.apprCompany||""})]));
 const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0},extra:q.extra||{}}),new Date().toISOString()]));
@@ -457,6 +458,7 @@ const docPerm=k=>({quote:"quote",rap:"rap",invoice:"billing",receipt:"billing",p
 /* company-scoped catalogue: empty companies list = visible to ALL (legacy rows) */
 const visibleTo=(rec,cid)=>!(rec.companies&&rec.companies.length)||rec.companies.includes(cid);
 const costOf=(e,cid)=>{const v=Number(e.costs?.[cid]); return v>0?v:(Number(e.cost)||0);};
+const priceOf=(e,cid)=>{const v=Number(e.prices?.[cid]); return v>0?v:(Number(e.price)||0);};
 const docCompanyId=q=>{const p=getProject(q.projectId); return p?.companyId||DB.companies[0]?.id;};
 const bapOverall=q=>{const sub=quoteSubtotal(q);return sub>0?q.sections.reduce((a,s)=>a+s.items.reduce((x,it)=>x+lineTotal(it)*(Number(it.prog)||0)/100,0),0)/sub*100:0;};
 const getDistributor=name=>DB.distributors.find(d=>d.name.trim().toLowerCase()===String(name||"").trim().toLowerCase());
@@ -663,7 +665,7 @@ function renderEquipmentRows(){
     <tr><td style="font-weight:600">${esc(e.brand)}</td><td>${esc(e.series)}</td>
     <td style="max-width:320px">${esc(e.description)}</td>
     <td>${e.category?`<span class="pill amber">${esc(e.category)}</span>`:""}</td>
-    <td>${esc(e.unit)}</td><td class="t-right num">${fmtRp(e.price)}</td>
+    <td>${esc(e.unit)}</td><td class="t-right num">${fmtRp(priceOf(e,ACTIVE_COMPANY))}</td>
     <td class="t-right num" style="color:var(--muted)">${costOf(e,ACTIVE_COMPANY)?fmtRp(costOf(e,ACTIVE_COMPANY)):"—"}</td>
     <td style="font-size:12px">${esc(e.distributor||"—")}${isAdmin()&&e.companies?.length?`<br><span style="font-size:10.5px;color:var(--accent-dark)">${e.companies.map(id=>esc(DB.companies.find(c=>c.id===id)?.name.split(" ")[0]||"?")).join(" · ")}</span>`:""}</td>
     <td style="white-space:nowrap;font-size:12px">
@@ -687,22 +689,30 @@ function openEquipmentModal(id){
       <div class="field"><label>Category</label><input id="m_cat" value="${esc(e?.category||"")}" list="catList" placeholder="Speaker / Mixer / …"></div>
       <div class="field"><label>Unit</label><input id="m_unit" value="${esc(e?.unit||"unit")}" placeholder="unit / pcs / lot / m"></div>
     </div>
-    <div class="field"><label>Sell price (IDR) — used in quotations, shared across companies</label><input id="m_price" type="number" min="0" value="${e?.price||""}"></div>
     ${isAdmin()?`
-    <div class="field"><label>Visible / usable by companies — with each company's own budget price (IDR)</label>
+    <div class="field"><label>Visible / usable by companies — with each company's own sell &amp; budget price (IDR)</label>
       <div style="display:grid;gap:8px">
+        <div style="display:flex;gap:10px;padding:0 10px;font-size:10.5px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em">
+          <span style="flex:1">Company</span><span style="width:150px;text-align:right">Sell price</span><span style="width:150px;text-align:right">Budget price</span></div>
         ${DB.companies.map(c=>{
           const on=e?(!e.companies?.length||e.companies.includes(c.id)):(c.id===ACTIVE_COMPANY);
           return `<div style="display:flex;align-items:center;gap:10px;padding:6px 10px;border:1px solid var(--line);border-radius:8px">
             <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer">
               <input type="checkbox" class="eqco" value="${c.id}" ${on?"checked":""}>${esc(c.name)}</label>
+            <input type="number" min="0" class="eqco_sell" data-cid="${c.id}" placeholder="sell price"
+              value="${e?(e.prices?.[c.id]??e.price??""):""}"
+              style="width:150px;border:1px solid var(--line);border-radius:6px;padding:5px 9px;text-align:right;font-family:var(--mono)">
             <input type="number" min="0" class="eqco_cost" data-cid="${c.id}" placeholder="budget price"
               value="${e?(e.costs?.[c.id]??e.cost??""):""}"
               style="width:150px;border:1px solid var(--line);border-radius:6px;padding:5px 9px;text-align:right;font-family:var(--mono)">
           </div>`;}).join("")}
       </div></div>`
-    :`<div class="field"><label>Budget / capital price (IDR) for ${esc(DB.companies.find(c=>c.id===ACTIVE_COMPANY)?.name||"your company")} — used in RAP</label>
-      <input id="m_cost" type="number" min="0" value="${e?(e.costs?.[ACTIVE_COMPANY]??e.cost??""):""}"></div>`}
+    :`<div class="field-row c2">
+      <div class="field"><label>Sell price (IDR) for ${esc(DB.companies.find(c=>c.id===ACTIVE_COMPANY)?.name||"your company")} — used in quotations</label>
+        <input id="m_price" type="number" min="0" value="${e?(e.prices?.[ACTIVE_COMPANY]??e.price??""):""}"></div>
+      <div class="field"><label>Budget / capital price (IDR) for ${esc(DB.companies.find(c=>c.id===ACTIVE_COMPANY)?.name||"your company")} — used in RAP</label>
+        <input id="m_cost" type="number" min="0" value="${e?(e.costs?.[ACTIVE_COMPANY]??e.cost??""):""}"></div>
+    </div>`}
     <div class="field"><label>Distributor / place to buy</label>
       <input id="m_dist" value="${esc(e?.distributor||"")}" list="distList" placeholder="pick from Distributors tab or type freely">
       <datalist id="distList">${DB.distributors.filter(d=>visibleTo(d,ACTIVE_COMPANY)).map(d=>`<option>${esc(d.name)}</option>`).join("")}</datalist></div>
@@ -714,25 +724,33 @@ function openEquipmentModal(id){
 async function saveEquipmentModal(id){
   const e0=id?DB.equipment.find(x=>x.id===id):null;
   const rec={brand:$("#m_brand").value.trim(),series:$("#m_series").value.trim(),description:$("#m_desc").value.trim(),
-    category:$("#m_cat").value.trim(),unit:$("#m_unit").value.trim()||"unit",price:Number($("#m_price").value)||0,distributor:$("#m_dist").value.trim()};
+    category:$("#m_cat").value.trim(),unit:$("#m_unit").value.trim()||"unit",distributor:$("#m_dist").value.trim()};
   if(!rec.brand&&!rec.series&&!rec.description) return alert("Fill in at least a brand, series or description.");
   if(isAdmin()){
     rec.companies=[...document.querySelectorAll(".eqco:checked")].map(c=>c.value);
     if(!rec.companies.length) return alert("Tick at least one company that can use this item.");
-    rec.costs={...(e0?.costs||{})};
+    rec.costs={...(e0?.costs||{})}; rec.prices={...(e0?.prices||{})};
     document.querySelectorAll(".eqco_cost").forEach(inp=>{
       const v=Number(inp.value)||0;
       if(v>0) rec.costs[inp.dataset.cid]=v; else delete rec.costs[inp.dataset.cid];
     });
+    document.querySelectorAll(".eqco_sell").forEach(inp=>{
+      const v=Number(inp.value)||0;
+      if(v>0) rec.prices[inp.dataset.cid]=v; else delete rec.prices[inp.dataset.cid];
+    });
+    rec.price=e0?e0.price:(Number(rec.prices[ACTIVE_COMPANY])||Number(Object.values(rec.prices)[0])||0);
   }else{
     rec.companies=e0?(e0.companies||[]).slice():[ACTIVE_COMPANY];
     if(!rec.companies.length) rec.companies=[ACTIVE_COMPANY];
-    rec.costs={...(e0?.costs||{})};
-    const v=Number($("#m_cost").value)||0;
-    if(v>0) rec.costs[ACTIVE_COMPANY]=v; else delete rec.costs[ACTIVE_COMPANY];
+    rec.costs={...(e0?.costs||{})}; rec.prices={...(e0?.prices||{})};
+    const vc=Number($("#m_cost").value)||0;
+    if(vc>0) rec.costs[ACTIVE_COMPANY]=vc; else delete rec.costs[ACTIVE_COMPANY];
+    const vp=Number($("#m_price").value)||0;
+    if(vp>0) rec.prices[ACTIVE_COMPANY]=vp; else delete rec.prices[ACTIVE_COMPANY];
+    rec.price=e0?e0.price:vp;
   }
   if(e0){
-    if(e0.price!==rec.price||JSON.stringify(e0.costs||{})!==JSON.stringify(rec.costs)) rec.priceUpdated=todayISO();
+    if(JSON.stringify(e0.prices||{})!==JSON.stringify(rec.prices)||JSON.stringify(e0.costs||{})!==JSON.stringify(rec.costs)) rec.priceUpdated=todayISO();
     Object.assign(e0,rec);
   } else DB.equipment.unshift({id:uid(),...rec,cost:0,priceUpdated:todayISO()});
   closeModal(); render(); await persist(saveEquipment);
@@ -1912,15 +1930,15 @@ function renderPicker(){
   $("#pkRows").innerHTML=list.length?list.map(e=>`
     <tr><td style="font-weight:600;white-space:nowrap">${esc(e.brand)}</td><td style="white-space:nowrap">${esc(e.series)}</td>
     <td style="color:var(--muted);font-size:12.5px">${esc(e.description)}</td>
-    <td class="t-right num" style="white-space:nowrap">${isStale(e)?`<span title="Price last checked ${ageLabel(e)} — verify before quoting" style="color:var(--red);cursor:help">⚠ </span>`:""}${["rap","po"].includes(getQuote(pickerCtx.qid)?.kind)?(costOf(e,docCompanyId(getQuote(pickerCtx.qid)))?fmtRp(costOf(e,docCompanyId(getQuote(pickerCtx.qid)))):fmtRp(e.price)+" *"):fmtRp(e.price)}</td>
+    <td class="t-right num" style="white-space:nowrap">${isStale(e)?`<span title="Price last checked ${ageLabel(e)} — verify before quoting" style="color:var(--red);cursor:help">⚠ </span>`:""}${["rap","po"].includes(getQuote(pickerCtx.qid)?.kind)?(costOf(e,docCompanyId(getQuote(pickerCtx.qid)))?fmtRp(costOf(e,docCompanyId(getQuote(pickerCtx.qid)))):fmtRp(priceOf(e,docCompanyId(getQuote(pickerCtx.qid))))+" *"):fmtRp(priceOf(e,docCompanyId(getQuote(pickerCtx.qid))))}</td>
     <td class="t-right"><button class="btn small primary" onclick="pickItem('${e.id}')">Add</button></td></tr>`).join("")
   :`<tr><td style="padding:20px;text-align:center;color:var(--muted)">No matches in the equipment database.</td></tr>`;
 }
 function pickItem(eid){
   const e=DB.equipment.find(x=>x.id===eid), {qid,si}=pickerCtx;
   const q=getQuote(qid);
-  const co=costOf(e,docCompanyId(q));
-  const price=(q.kind==="rap"||q.kind==="po")?(co>0?co:e.price):e.price;
+  const cid=docCompanyId(q), co=costOf(e,cid), sp=priceOf(e,cid);
+  const price=(q.kind==="rap"||q.kind==="po")?(co>0?co:sp):sp;
   q.sections[si].items.push({brand:e.brand,series:e.series,description:e.description,qty:1,unit:e.unit||"unit",price});
   setDirty(true); toast(e.brand+" "+e.series+" added"+((q.kind==="rap"||q.kind==="po")&&co>0?" (budget price)":""));
   render(); // re-render page behind modal
