@@ -199,6 +199,7 @@ table.grid tr.rowlink:hover td{background:#F5F8F5}
 <div id="app" style="display:none">
   <div class="topbar">
     <div class="brand"><span class="brand-mark">AV</span> Quotation Builder</div>
+    <span id="coChip" style="display:none;align-items:center;gap:8px;font-size:12px;background:rgba(255,255,255,.08);border-radius:99px;padding:4px 12px;color:#CFE2D6"></span>
     <span class="crumb" id="crumb"></span>
     <div class="spacer"></div>
     <span id="saveState" style="font-family:var(--mono);font-size:11px;color:#8FA396"></span>
@@ -330,6 +331,10 @@ async function signIn(){
     }
     CURRENT_USER=DB.users.find(u=>u.email.trim().toLowerCase()===userEmail.toLowerCase());
     if(!CURRENT_USER) throw new Error(userEmail+" is not registered in this app. Ask the administrator to add you in the Users tab.");
+    const allowedCos=allowedCompanyIds();
+    if(!allowedCos.length) throw new Error("Your account has no company issuer assigned. Ask the administrator to grant company access in the Users tab.");
+    ACTIVE_COMPANY=allowedCos.length===1?allowedCos[0]:null;
+    route.view=ACTIVE_COMPANY?"home":"companyselect";
     $("#loginScreen").style.display="none"; $("#app").style.display="block";
     $("#userChip").innerHTML=(userPic?`<img src="${esc(userPic)}" alt="">`:"")+`<span>${esc(userEmail)}</span><span class="pill" style="background:rgba(255,255,255,.12);color:#CFE2D6">${(CURRENT_USER.roles||[]).map(r=>ROLE_LABEL[r]||r).join(" · ")||"no role"}</span>`;
     render();
@@ -435,6 +440,7 @@ const kindQuotes=(pid,k)=>DB.quotations.filter(q=>q.projectId===pid&&(q.kind||"q
 const projCompany=p=>DB.companies.find(c=>c.id===p?.companyId)||DB.companies[0]||{name:CONFIG.COMPANY.name,tagline:CONFIG.COMPANY.tagline,address:CONFIG.COMPANY.address,contact:CONFIG.COMPANY.contact,bank:""};
 /* ---------- roles & permissions ---------- */
 let CURRENT_USER=null;
+let ACTIVE_COMPANY=null; // company issuer chosen after login
 const ROLE_LABEL={admin:"Administrator",engineer:"Engineer",adminproject:"Admin Project",finance:"Finance",purchasing:"Purchasing"};
 const PERMS={
   equipment:["admin","purchasing"], distributors:["admin","purchasing"],
@@ -475,11 +481,47 @@ const projectQuotes=pid=>DB.quotations.filter(q=>q.projectId===pid);
 
 /* ================= router ================= */
 function go(r){ if(dirty && !confirm("You have unsaved changes on this quotation. Leave without saving?")) return; setDirty(false); route={...route,...r}; render(); window.scrollTo(0,0); }
+function updateCoChip(){
+  const chip=$("#coChip"); if(!chip) return;
+  const co=DB.companies.find(c=>c.id===ACTIVE_COMPANY);
+  if(!co){ chip.style.display="none"; return; }
+  chip.style.display="inline-flex";
+  chip.innerHTML=`<strong>${esc(co.name)}</strong>${allowedCompanyIds().length>1?`<button class="btn small dark" style="padding:2px 8px;font-size:11px" onclick="route.view='companyselect';render()">Switch</button>`:""}`;
+}
 function render(){
   const v=$("#view"), crumb=$("#crumb");
+  updateCoChip();
+  if(route.view==="companyselect"){ crumb.textContent=""; renderCompanySelect(v); return; }
   if(route.view==="home"){ crumb.textContent=""; renderHome(v); }
   else if(route.view==="project"){ const p=getProject(route.projectId); crumb.textContent="/ "+(p?.name||""); renderProject(v,p); }
   else if(route.view==="quote"){ const q=getQuote(route.quoteId); const p=getProject(q?.projectId); crumb.textContent="/ "+(p?.name||"")+" / "+(q?.quoteNumber||q?.title||"quotation"); renderQuote(v,q,p); }
+}
+
+/* ================= COMPANY SELECT ================= */
+function renderCompanySelect(v){
+  const cos=DB.companies.filter(c=>allowedCompanyIds().includes(c.id));
+  v.innerHTML=`
+    <div style="max-width:640px;margin:8vh auto 0;text-align:center">
+      <span class="eyebrow">Welcome ${esc(CURRENT_USER?.email||"")}</span>
+      <h1 style="font-size:24px;margin:6px 0 4px">Choose your company issuer</h1>
+      <p style="color:var(--muted);font-size:13.5px;margin-bottom:24px">You'll work inside this company's projects — its letterhead prints on every document. You can switch anytime from the top bar.</p>
+      <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
+        ${cos.map(c=>{
+          const n=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===c.id).length;
+          return `<button class="card card-pad" style="text-align:left;cursor:pointer;border-width:2px" onclick="selectCompany('${c.id}')"
+            onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--line)'">
+            <div class="brand-mark" style="width:34px;height:34px;font-size:13px;margin-bottom:10px">${esc(c.name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase())}</div>
+            <div style="font-weight:700;font-size:15px">${esc(c.name)}</div>
+            <div style="color:var(--muted);font-size:12px;margin:2px 0 8px">${esc(c.tagline||"")}</div>
+            <span class="pill">${n} project${n===1?"":"s"}</span>
+          </button>`;}).join("")}
+      </div>
+    </div>`;
+}
+function selectCompany(id){
+  ACTIVE_COMPANY=id;
+  route.view="home"; route.tab="projects"; route.companyFilter="";
+  render(); toast("Working as "+(DB.companies.find(c=>c.id===id)?.name||""));
 }
 
 /* ================= HOME ================= */
@@ -521,17 +563,14 @@ function renderHome(v){
 async function reloadData(){ try{ await loadAll(); render(); toast("Data reloaded from Sheet"); }catch(e){ alert(e.message); } }
 
 function renderProjectList(b){
-  const coSel=`<div style="display:flex;gap:10px;margin-bottom:14px;align-items:center">
-    <span class="eyebrow">Issuer company</span>
-    <select onchange="route.companyFilter=this.value;render()" style="border:1px solid var(--line);border-radius:8px;padding:8px;min-width:220px">
-      <option value="">All companies</option>
-      ${DB.companies.filter(c=>allowedCompanyIds().includes(c.id)).map(c=>`<option value="${c.id}" ${route.companyFilter===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}
-    </select></div>`;
-  const list=DB.projects.filter(p=>canSeeProject(p)&&(!route.companyFilter||(p.companyId||DB.companies[0]?.id)===route.companyFilter));
-  if(!DB.projects.length){ b.innerHTML=coSel+`<div class="card"><div class="empty"><span class="eyebrow">No projects yet</span>Create your first project to start building quotations.</div></div>`; return; }
-  b.innerHTML=coSel+`<div class="card"><table class="grid">
+  const co=DB.companies.find(c=>c.id===ACTIVE_COMPANY);
+  const head=`<div style="display:flex;gap:10px;margin-bottom:14px;align-items:center">
+    <span class="eyebrow">Projects of</span><span class="pill" style="font-size:12.5px">${esc(co?.name||"—")}</span></div>`;
+  const list=DB.projects.filter(p=>canSeeProject(p)&&(p.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY);
+  if(!list.length){ b.innerHTML=head+`<div class="card"><div class="empty"><span class="eyebrow">No projects yet for ${esc(co?.name||"this company")}</span>${can("manage")?"Create the first project with “+ New project”.":"Projects will appear here once created."}</div></div>`; return; }
+  b.innerHTML=head+`<div class="card"><table class="grid">
     <thead><tr><th>Project</th><th>Company</th><th>Location</th><th>Client</th><th>Docs</th><th>Created</th><th></th></tr></thead>
-    <tbody>${list.length?list.map(p=>`
+    <tbody>${list.map(p=>`
       <tr class="rowlink" onclick="go({view:'project',projectId:'${p.id}'})">
         <td style="font-weight:600">${esc(p.name)}</td>
         <td><span class="pill">${esc(projCompany(p).name)}</span></td>
@@ -540,13 +579,13 @@ function renderProjectList(b){
         <td><span class="pill amber">${DB.quotations.filter(q=>q.projectId===p.id).length}</span></td>
         <td class="num" style="font-size:12px;color:var(--muted)">${esc(p.created)}</td>
         <td class="t-right">${can("manage")?`<button class="btn ghost small danger" onclick="event.stopPropagation();deleteProject('${p.id}')">Delete</button>`:""}</td>
-      </tr>`).join(""):`<tr><td colspan="7"><div class="empty">No projects for this company yet.</div></td></tr>`}
+      </tr>`).join("")}
     </tbody></table></div>`;
 }
 function openProjectModal(p){
   openModal(p?"Edit project":"New project",`
     <div class="field"><label>Issuer company (shown on all PDF headers)</label>
-      <select id="m_company">${DB.companies.filter(c=>allowedCompanyIds().includes(c.id)).map(c=>`<option value="${c.id}" ${(p?.companyId||route.companyFilter||DB.companies[0]?.id)===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}</select></div>
+      <select id="m_company">${DB.companies.filter(c=>allowedCompanyIds().includes(c.id)).map(c=>`<option value="${c.id}" ${(p?.companyId||ACTIVE_COMPANY||DB.companies[0]?.id)===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}</select></div>
     <div class="field"><label>Project name</label><input id="m_name" value="${esc(p?.name||"")}" placeholder="e.g. Paragon Multifunction Room"></div>
     <div class="field-row c2">
       <div class="field"><label>Location</label><input id="m_loc" value="${esc(p?.location||"")}" placeholder="e.g. Jakarta"></div>
@@ -857,6 +896,8 @@ async function deleteTemplate(id){
 function renderProject(v,p){
   if(!p){ go({view:"home"}); return; }
   if(!canSeeProject(p)){ toast("You don't have access to this company's projects"); go({view:"home"}); return; }
+  const pCo=p.companyId||DB.companies[0]?.id;
+  if(pCo!==ACTIVE_COMPANY){ ACTIVE_COMPANY=pCo; updateCoChip(); }
   const co=projCompany(p);
   const tabsAllowed={docs:can("quote")||can("rap"),billing:can("billing"),po:can("po"),sj:can("sj"),ba:can("ba")};
   if(!tabsAllowed[route.ptab]) route.ptab=tabsAllowed.docs?"docs":tabsAllowed.billing?"billing":tabsAllowed.po?"po":tabsAllowed.sj?"sj":"ba";
