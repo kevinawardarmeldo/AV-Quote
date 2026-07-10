@@ -921,6 +921,18 @@ function docTable(list,kind,emptyMsg){
         <td class="t-right" style="white-space:nowrap">${docRowActions(q,kind)}</td>
       </tr>`).join(""):`<tr><td colspan="5"><div class="empty">${emptyMsg}</div></td></tr>`}
     </tbody></table></div>`;
+  if(kind==="mos") return `<div class="card" style="margin-bottom:22px"><table class="grid">
+    <thead><tr><th>MOS no.</th><th>Title</th><th>Date</th><th>Ref. quotation</th><th class="t-right">Items</th><th></th></tr></thead>
+    <tbody>${list.length?list.map(q=>`
+      <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
+        <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
+        <td>${esc(q.title||"Untitled")}</td>
+        <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
+        <td style="font-size:12.5px">${esc(q.extra?.refQuote||"—")}</td>
+        <td class="t-right num">${q.sections.reduce((a,s)=>a+s.items.length,0)}</td>
+        <td class="t-right" style="white-space:nowrap">${docRowActions(q,kind)}</td>
+      </tr>`).join(""):`<tr><td colspan="6"><div class="empty">${emptyMsg}</div></td></tr>`}
+    </tbody></table></div>`;
   if(kind==="sj") return `<div class="card" style="margin-bottom:22px"><table class="grid">
     <thead><tr><th>SJ no.</th><th>Title</th><th>Date</th><th>Ref. quotation</th><th>Deliver to</th><th class="t-right">Items</th><th></th></tr></thead>
     <tbody>${list.length?list.map(q=>`
@@ -1185,7 +1197,7 @@ function openMOSFromQuote(quoteId){
     });
   });
   openModal("Material on site — items from “"+esc(src.quoteNumber||src.title)+"”",`
-    <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Set the quantity currently on site per item. Values are taken from quotation prices for the material claim.</p>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Set the quantity currently on site per item. The printed form focuses on quantities only, with a check column and notes column for on-site verification.</p>
     <div style="max-height:48vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px">
       <table class="grid"><tbody>${rows}</tbody></table></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
@@ -1410,7 +1422,7 @@ function renderQuote(v,q,p){
         <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(480px,80vw)" value="${esc(q.title)}" placeholder="Quotation title / option name" onchange="qSet('${q.id}','title',this.value)"></h1>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${q.kind!=="sj"?`<button class="btn" onclick="exportQuoteXlsx('${q.id}')">⤓ Excel</button>`:""}
+        ${!["sj","mos"].includes(q.kind)?`<button class="btn" onclick="exportQuoteXlsx('${q.id}')">⤓ Excel</button>`:""}
         <button class="btn" onclick="printQuote('${q.id}')">⤓ PDF</button>
         <button class="btn primary" onclick="persist(saveQuotes)">Save</button>
       </div>
@@ -1420,7 +1432,7 @@ function renderQuote(v,q,p){
       <div class="field-row c3">
         <div class="field"><label>${KIND_LABEL[q.kind||"quote"]} number (manual)</label><input value="${esc(q.quoteNumber)}" placeholder="e.g. Q/SAM/2026/07-014" onchange="qSet('${q.id}','quoteNumber',this.value)"></div>
         <div class="field"><label>Date</label><input type="date" value="${esc(q.date)}" onchange="qSet('${q.id}','date',this.value)"></div>
-        ${q.kind!=="sj"?`<div class="field"><label>Tax</label>
+        ${!["sj","mos"].includes(q.kind)?`<div class="field"><label>Tax</label>
           <select onchange="qSet('${q.id}','tax',this.value==='1')">
             <option value="1" ${q.tax?"selected":""}>Add PPN 11%</option>
             <option value="0" ${q.tax?"":"selected"}>No tax (exclude PPN)</option>
@@ -1439,7 +1451,7 @@ function renderQuote(v,q,p){
       </div>
       <div class="sub" style="font-size:12px;color:var(--muted);margin-bottom:8px">Ref. quotation: <strong>${esc(q.extra?.refQuote||"—")}</strong> · prices are never shown on a surat jalan.</div>`:""}
       ${q.kind==="mos"?`
-      <div class="sub" style="font-size:12px;color:var(--muted);margin-bottom:8px">Ref. quotation: <strong>${esc(q.extra?.refQuote||"—")}</strong> · quantities represent material currently on site; values follow quotation prices.</div>`:""}
+      <div class="sub" style="font-size:12px;color:var(--muted);margin-bottom:8px">Ref. quotation: <strong>${esc(q.extra?.refQuote||"—")}</strong> · quantities represent material currently on site — no prices are shown; the printed form has a check column and site-notes column for on-site verification with the client.</div>`:""}
       ${q.kind==="po"?`
       <div class="field-row c2">
         <div class="field"><label>Distributor / store (PO recipient)</label>
@@ -1456,7 +1468,7 @@ function renderQuote(v,q,p){
     <button class="btn dark" onclick="addSection('${q.id}')">+ Add section</button>
     ${(["sj","po"].includes(q.kind)&&q.sections.length>1)?`<button class="btn" style="margin-left:8px" onclick="mergeSections('${q.id}')">⇆ Merge all sections</button>`:""}
 
-    ${q.kind!=="sj"?`<div class="card card-pad" style="margin-top:24px">
+    ${!["sj","mos"].includes(q.kind)?`<div class="card card-pad" style="margin-top:24px">
       <div class="totals">
         <div class="line"><span>Subtotal</span><span class="num">${fmtRp(quoteSubtotal(q))}</span></div>
         <div class="line" style="align-items:center">
@@ -1493,7 +1505,7 @@ function renderQuote(v,q,p){
     </div>`;
 }
 function sectionHTML(q,s,si){
-  const sj=q.kind==="sj";
+  const sj=["sj","mos"].includes(q.kind); // price-free document kinds
   return `<div class="section-block">
     <div class="section-head">
       <input value="${esc(s.name)}" placeholder="Section name (e.g. AV Control Room)" onchange="renameSection('${q.id}',${si},this.value)">
@@ -1699,7 +1711,14 @@ function renderBAP(v,q,p){
         <div class="field"><label>Date</label><input type="date" value="${esc(q.date)}" onchange="qSet('${q.id}','date',this.value)"></div>
         <div class="field"><label>Termin / claim (printed)</label><input value="${esc(q.extra?.termin||"")}" placeholder="e.g. Termin 2 — 50%" onchange="exSet('${q.id}','termin',this.value)"></div>
       </div>
-      <div class="field" style="margin-bottom:0"><label>Work period (periode pekerjaan)</label><input value="${esc(q.extra?.periode||"")}" placeholder="e.g. 1 – 31 Juli 2026" onchange="exSet('${q.id}','periode',this.value)"></div>
+      <div class="field-row c2" style="margin-bottom:0">
+        <div class="field" style="margin-bottom:0"><label>Work period (periode pekerjaan)</label><input value="${esc(q.extra?.periode||"")}" placeholder="e.g. 1 – 31 Juli 2026" onchange="exSet('${q.id}','periode',this.value)"></div>
+        <div class="field" style="margin-bottom:0"><label>Values (Nilai) on PDF</label>
+          <select onchange="exSet('${q.id}','showPrices',this.value)">
+            <option value="1" ${q.extra?.showPrices!=="0"?"selected":""}>Include price / nilai column</option>
+            <option value="0" ${q.extra?.showPrices==="0"?"selected":""}>Exclude prices — weight & progress only</option>
+          </select></div>
+      </div>
     </div>
     <div class="card card-pad" style="margin-bottom:22px;background:var(--accent-soft);border-color:var(--accent)">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
@@ -1742,8 +1761,24 @@ function renderBAST(v,q,p){
       </div>
       <div class="field"><label>Scope of work (lingkup pekerjaan)</label><textarea rows="3" placeholder="e.g. Pengadaan dan instalasi sistem tata suara Multifunction Room…" onchange="exSet('${q.id}','scope',this.value)">${esc(x.scope||"")}</textarea></div>
       <div class="field"><label>Maintenance / warranty period (masa pemeliharaan) — optional</label><input value="${esc(x.maintenance||"")}" placeholder="e.g. 90 hari kalender sejak tanggal serah terima" onchange="exSet('${q.id}','maintenance',this.value)"></div>
+      <div class="field"><label>Appendices (lampiran) — tick documents to reference in the BAST text</label>
+        ${(()=>{const docs=[...kindQuotes(p.id,"mos"),...kindQuotes(p.id,"bap")];
+          if(!docs.length) return '<span style="font-size:12px;color:var(--muted)">No MOS or BA Progress documents in this project yet — the appendix mention is optional.</span>';
+          const sel=x.appendix||[];
+          return `<div style="display:grid;gap:6px">`+docs.map(d=>`
+            <label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" ${sel.includes(d.id)?"checked":""} onchange="toggleBASTAppendix('${q.id}','${d.id}',this.checked)">
+              <span class="pill ${d.kind==="mos"?"amber":""}">${d.kind==="mos"?"MOS":"BA Progress"}</span> ${esc(d.quoteNumber||d.title)}</label>`).join("")+`</div>`;})()}
+      </div>
       <div class="field" style="margin-bottom:0"><label>Additional notes (printed)</label><textarea rows="3" oninput="qSetSilent('${q.id}','notes',this.value)">${esc(q.notes)}</textarea></div>
     </div>`;
+}
+
+function toggleBASTAppendix(qid,docId,on){
+  const q=getQuote(qid); q.extra=q.extra||{}; q.extra.appendix=q.extra.appendix||[];
+  if(on&&!q.extra.appendix.includes(docId)) q.extra.appendix.push(docId);
+  if(!on) q.extra.appendix=q.extra.appendix.filter(x=>x!==docId);
+  setDirty(true);
 }
 
 /* ================= equipment picker ================= */
@@ -1837,6 +1872,7 @@ function printQuote(qid){
   });
   const isRap=q.kind==="rap", isInv=q.kind==="invoice", isPO=q.kind==="po", isSJ=q.kind==="sj", isMOS=q.kind==="mos";
   if(isSJ) return printSJ(q,p);
+  if(isMOS) return printMOS(q,p);
   const title=isRap?"PROJECT BUDGET (RAP)":isInv?"INVOICE":isPO?"PURCHASE ORDER":isMOS?"MATERIAL ON SITE APPROVAL":"QUOTATION";
   const dist=isPO?getDistributor(q.extra?.distributor):null;
   const meta=[["Project",p.name],["Location",p.location||"—"],
@@ -1906,6 +1942,35 @@ function printSJ(q,p){
   </div>`;
   doPrint((q.quoteNumber||q.title||"Surat Jalan")+" - "+p.name);
 }
+function printMOS(q,p){
+  const x=q.extra||{}, S=(p&&p.sig)||{};
+  if(dirty) persist(saveQuotes);
+  const box='<span style="display:inline-block;width:12px;height:12px;border:1.2pt solid #111"></span>';
+  let rows="", no=0;
+  q.sections.forEach(sec=>{
+    rows+=`<tr class="sec"><td colspan="8">${esc(sec.name).toUpperCase()}</td></tr>`;
+    sec.items.forEach(it=>{ no++;
+      rows+=`<tr><td class="num-p">${no}</td><td>${esc(it.brand)}</td><td>${esc(it.series)}</td><td>${esc(it.description)}</td>
+        <td class="num-p" style="text-align:right">${fmtN(it.qty)}</td><td>${esc(it.unit)}</td>
+        <td style="text-align:center">${box}</td><td></td></tr>`;
+    });
+  });
+  const meta=[["Project",p.name],["Location",p.location||"—"],["MOS no.",q.quoteNumber||"—"],
+    ["Date",fmtDate(q.date)],["Ref. quotation",x.refQuote||"—"],
+    ["Exported",new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})]];
+  $("#printArea").innerHTML=`<div class="p-doc">
+    ${docHeaderHTML("MATERIAL ON SITE APPROVAL",p,meta)}
+    <p style="font-size:10.5px;color:#444;margin:2px 0 8px">Checklist diverifikasi bersama di lokasi — beri tanda ✓ pada kolom “Checked” dan catatan pada kolom “Site Notes”. /
+      <em>Verified together on site — tick the “Checked” column and use “Site Notes” for remarks.</em></p>
+    <table class="p-table">
+      <thead><tr><th style="width:22px">No</th><th style="width:80px">Brand</th><th style="width:100px">Series / Type</th><th>Description</th><th style="width:56px;text-align:right">Qty on Site</th><th style="width:42px">Unit</th><th style="width:52px;text-align:center">Checked</th><th style="width:120px">Site Notes</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${q.notes.trim()?`<div class="p-notes"><h4>Notes</h4><div>${esc(q.notes)}</div></div>`:""}
+    ${signBlockHTML(p,"Disetujui oleh / Approved by","")}
+  </div>`;
+  doPrint((q.quoteNumber||q.title||"MOS")+" - "+p.name);
+}
 function baSignHTML(p,firstLabel,secondLabel){
   const S=(p&&p.sig)||{};
   const blank='(&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;)';
@@ -1922,15 +1987,17 @@ function baSignHTML(p,firstLabel,secondLabel){
 function printBAP(qid){
   const q=getQuote(qid), p=getProject(q.projectId), x=q.extra||{};
   if(dirty) persist(saveQuotes);
+  const showP=x.showPrices!=="0";
+  const cols=showP?8:7;
   const sub=quoteSubtotal(q), overall=bapOverall(q);
   let rows="", no=0;
   q.sections.forEach(sec=>{
-    rows+=`<tr class="sec"><td colspan="8">${esc(sec.name).toUpperCase()}</td></tr>`;
+    rows+=`<tr class="sec"><td colspan="${cols}">${esc(sec.name).toUpperCase()}</td></tr>`;
     sec.items.forEach(it=>{ no++;
       const w=sub>0?lineTotal(it)/sub*100:0;
       rows+=`<tr><td class="num-p">${no}</td><td>${esc((it.brand+" "+it.series).trim())} ${it.description?"— "+esc(it.description):""}</td>
         <td class="num-p" style="text-align:right">${fmtN(it.qty)}</td><td>${esc(it.unit)}</td>
-        <td class="num-p" style="text-align:right">${fmtRp(lineTotal(it))}</td>
+        ${showP?`<td class="num-p" style="text-align:right">${fmtRp(lineTotal(it))}</td>`:""}
         <td class="num-p" style="text-align:right">${w.toFixed(2)}%</td>
         <td class="num-p" style="text-align:right">${fmtN(it.prog||0)}%</td>
         <td class="num-p" style="text-align:right">${(w*(Number(it.prog)||0)/100).toFixed(2)}%</td></tr>`;
@@ -1946,10 +2013,10 @@ function printBAP(qid){
       <strong>${esc(projCompany(p).name)}</strong> selaku PIHAK KEDUA — menyatakan bahwa kemajuan pekerjaan <strong>${esc(p.name)}</strong>
       ${x.refQuote?"berdasarkan "+esc(x.refQuote)+" ":""}telah mencapai <strong>${fmtN(overall)}%</strong> dengan rincian sebagai berikut:</p>
     <table class="p-table">
-      <thead><tr><th style="width:22px">No</th><th>Uraian Pekerjaan / Item</th><th style="width:42px;text-align:right">Qty</th><th style="width:40px">Unit</th><th style="width:92px;text-align:right">Nilai</th><th style="width:56px;text-align:right">Bobot</th><th style="width:62px;text-align:right">Progress</th><th style="width:66px;text-align:right">Tertimbang</th></tr></thead>
+      <thead><tr><th style="width:22px">No</th><th>Uraian Pekerjaan / Item</th><th style="width:42px;text-align:right">Qty</th><th style="width:40px">Unit</th>${showP?'<th style="width:92px;text-align:right">Nilai</th>':""}<th style="width:56px;text-align:right">Bobot</th><th style="width:62px;text-align:right">Progress</th><th style="width:66px;text-align:right">Tertimbang</th></tr></thead>
       <tbody>${rows}
       <tr class="subtotal"><td colspan="4" style="text-align:right">TOTAL</td>
-        <td class="num-p" style="text-align:right">${fmtRp(sub)}</td>
+        ${showP?`<td class="num-p" style="text-align:right">${fmtRp(sub)}</td>`:""}
         <td class="num-p" style="text-align:right">100%</td><td></td>
         <td class="num-p" style="text-align:right">${fmtN(overall)}%</td></tr>
       </tbody></table>
@@ -1977,6 +2044,10 @@ function printBAST(qid){
       dan PIHAK PERTAMA telah menerima hasil pekerjaan tersebut dalam keadaan baik dan lengkap. /
       <em>The Second Party has completed 100% of the works and the First Party has received the results in good and complete condition.</em></p>
     ${x.maintenance?`<p style="font-size:11px;margin:6px 0">Masa pemeliharaan / maintenance period: <strong>${esc(x.maintenance)}</strong>.</p>`:""}
+    ${(()=>{const ids=x.appendix||[]; const docs=ids.map(id=>getQuote(id)).filter(Boolean);
+      if(!docs.length) return "";
+      return `<p style="font-size:11px;margin:8px 0 3px">Berita acara ini dilengkapi dengan lampiran sebagai berikut / <em>this certificate is completed with the following appendices</em>:</p>
+      <ol style="font-size:11px;margin:0 0 4px 18px">${docs.map(d=>`<li><strong>${d.kind==="mos"?"Material on Site Approval":"Berita Acara Progress"}</strong> — ${esc(d.quoteNumber||d.title)} (${fmtDate(d.date)})</li>`).join("")}</ol>`;})()}
     ${q.notes.trim()?`<div class="p-notes"><h4>Notes</h4><div>${esc(q.notes)}</div></div>`:""}
     ${baSignHTML(p,"Yang menerima,","Yang menyerahkan,")}
   </div>`;
