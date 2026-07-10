@@ -255,7 +255,7 @@ const SHEETS = {
   Quotations:   ["ID","ProjectID","QuoteNumber","Title","Date","Tax","DataJSON","Updated"],
   NoteTemplates:["ID","Name","Content"],
   SignaturePresets:["ID","Name","JSON"],
-  Distributors: ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies"],
+  Distributors: ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies","Bank Accounts"],
   Companies:    ["ID","Name","Tagline","Address","Contact","Bank Details"],
   Users:        ["ID","Email","Roles","Companies","Locked"]
 };
@@ -406,7 +406,7 @@ async function loadAll(){
   });
   DB.templates=nt.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",content:r[2]||""}));
   DB.sigPresets=(sp||[]).filter(r=>r[0]).map(r=>{let j={};try{j=JSON.parse(r[2]||"{}")}catch(e){} return {id:r[0],name:r[1]||"",...j};});
-  DB.distributors=(di||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",contact:r[2]||"",phone:r[3]||"",email:r[4]||"",address:r[5]||"",notes:r[6]||"",companies:(r[7]||"").split(",").filter(Boolean)}));
+  DB.distributors=(di||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",contact:r[2]||"",phone:r[3]||"",email:r[4]||"",address:r[5]||"",notes:r[6]||"",companies:(r[7]||"").split(",").filter(Boolean),bankAccounts:(()=>{try{return JSON.parse(r[8]||"[]")}catch(e){return []}})()}));
   DB.companies=(co||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",tagline:r[2]||"",address:r[3]||"",contact:r[4]||"",bank:r[5]||""}));
   DB.users=(us||[]).filter(r=>r[0]).map(r=>({id:r[0],email:r[1]||"",roles:(r[2]||"").split(",").filter(Boolean),companies:(r[3]||"").split(",").filter(Boolean),locked:r[4]==="TRUE"}));
 }
@@ -421,7 +421,7 @@ const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.loc
 const saveSigPresets=()=>saveTab("SignaturePresets",DB.sigPresets.map(t=>[t.id,t.name,JSON.stringify({prepName:t.prepName||"",prepTitle:t.prepTitle||"",apprName:t.apprName||"",apprCompany:t.apprCompany||""})]));
 const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0},extra:q.extra||{}}),new Date().toISOString()]));
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
-const saveDistributors=()=>saveTab("Distributors",DB.distributors.map(d=>[d.id,d.name,d.contact,d.phone,d.email,d.address,d.notes,(d.companies||[]).join(",")]));
+const saveDistributors=()=>saveTab("Distributors",DB.distributors.map(d=>[d.id,d.name,d.contact,d.phone,d.email,d.address,d.notes,(d.companies||[]).join(","),JSON.stringify(d.bankAccounts||[])]));
 const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.tagline,c.address,c.contact,c.bank]));
 const saveUsers=()=>saveTab("Users",DB.users.map(u=>[u.id,u.email,u.roles.join(","),u.companies.join(","),u.locked?"TRUE":"FALSE"]));
 async function persist(fn,msg){
@@ -1055,13 +1055,13 @@ function docTable(list,kind,emptyMsg){
       </tr>`).join(""):`<tr><td colspan="7"><div class="empty">${emptyMsg}</div></td></tr>`}
     </tbody></table></div>`;
   return `<div class="card" style="margin-bottom:22px"><table class="grid">
-    <thead><tr><th>${KIND_LABEL[kind]} no.</th><th>Title</th><th>Date</th>${kind==="po"?"<th>Distributor</th>":""}${kind!=="receipt"?'<th>PPN 11%</th><th class="t-right">Subtotal</th><th class="t-right">Discount</th>':"<th>Received from</th>"}<th class="t-right">${kind==="receipt"?"Amount":"Grand total"}</th><th></th></tr></thead>
+    <thead><tr><th>${KIND_LABEL[kind]} no.</th><th>Title</th><th>Date</th>${kind==="po"?"<th>Distributor</th><th>Paid</th>":""}${kind!=="receipt"?'<th>PPN 11%</th><th class="t-right">Subtotal</th><th class="t-right">Discount</th>':"<th>Received from</th>"}<th class="t-right">${kind==="receipt"?"Amount":"Grand total"}</th><th></th></tr></thead>
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
         <td>${esc(q.title||"Untitled")}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
-        ${kind==="po"?`<td>${esc(q.extra?.distributor||"—")}</td>`:""}
+        ${kind==="po"?`<td>${esc(q.extra?.distributor||"—")}</td><td>${q.extra?.paid?`<span class="pill" title="${esc(q.extra?.payMethod||"")} ${esc(q.extra?.payBank||"")}">paid ${q.extra?.paidDate?fmtDate(q.extra.paidDate):""}</span>`:'<span class="pill amber">unpaid</span>'}</td>`:""}
         ${kind!=="receipt"?`
           <td>${q.tax?'<span class="pill">included</span>':'<span class="pill amber">excluded</span>'}</td>
           <td class="t-right num">${fmtRp(quoteSubtotal(q))}</td>
@@ -1177,8 +1177,12 @@ function renderProjectPO(b,p){
       </div>
     </div>
     ${docTable(pos,"po","Create a PO from RAP items (recommended) — pick the lines to order and the distributor — or start blank.")}
-    ${pos.length?`<div class="card card-pad" style="max-width:460px"><div class="totals" style="max-width:none">
-      <div class="line grand"><span>Total purchasing</span><span class="num">${fmtRp(total)}</span></div></div></div>`:""}`;
+    ${pos.length?(()=>{const paid=pos.filter(x=>x.extra?.paid).reduce((a,x)=>a+quoteGrand(x),0);
+      return `<div class="card card-pad" style="max-width:460px"><div class="totals" style="max-width:none">
+      <div class="line"><span>Total purchasing</span><span class="num">${fmtRp(total)}</span></div>
+      <div class="line"><span>Paid</span><span class="num" style="color:var(--accent-dark)">${fmtRp(paid)}</span></div>
+      <div class="line grand"><span>Unpaid</span><span class="num" style="color:${total-paid>0?"var(--red)":"var(--accent-dark)"}">${fmtRp(total-paid)}</span></div>
+      </div></div>`;})():""}`;
 }
 
 function renderProjectSJ(b,p){
@@ -1570,6 +1574,35 @@ function renderQuote(v,q,p){
             ${DB.distributors.filter(d=>visibleTo(d,docCompanyId(q))||q.extra?.distributor===d.name).map(d=>`<option value="${esc(d.name)}" ${q.extra?.distributor===d.name?"selected":""}>${esc(d.name)}</option>`).join("")}
           </select></div>
         <div class="field"><label>Ship to / delivery address</label><input value="${esc(q.extra?.shipTo||"")}" placeholder="e.g. project site or warehouse" onchange="exSet('${q.id}','shipTo',this.value)"></div>
+      </div>
+      <div style="border:1px solid ${q.extra?.paid?"var(--accent)":"var(--line)"};border-radius:8px;padding:12px 14px;margin-bottom:12px;background:${q.extra?.paid?"var(--accent-soft)":"#FBFCFB"}">
+        <label style="display:flex;align-items:center;gap:10px;font-weight:600;cursor:pointer">
+          <input type="checkbox" ${q.extra?.paid?"checked":""} onchange="poSetPaid('${q.id}',this.checked)">
+          This PO has been paid ${q.extra?.paid?`<span class="pill">LUNAS</span>`:""}
+        </label>
+        ${q.extra?.paid?`
+        <div class="field-row c2" style="margin-top:12px">
+          <div class="field"><label>Payment date</label><input type="date" value="${esc(q.extra?.paidDate||"")}" onchange="exSet('${q.id}','paidDate',this.value)"></div>
+          <div class="field"><label>Payment method</label>
+            <select onchange="exSet('${q.id}','payMethod',this.value)">
+              ${["Transfer","Cash","Cheque / Giro"].map(m=>`<option ${(q.extra?.payMethod||"Transfer")===m?"selected":""}>${m}</option>`).join("")}
+            </select></div>
+        </div>
+        <div class="field"><label>Paid to — saved accounts of ${esc(q.extra?.distributor||"this distributor")}</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <select id="poAccSel" style="flex:1;min-width:200px;border:1px solid var(--line);border-radius:8px;padding:8px">
+              <option value="">— pick a saved account —</option>
+              ${(getDistributor(q.extra?.distributor)?.bankAccounts||[]).map((a,i)=>`<option value="${i}">${esc(a.bank)} · ${esc(a.no)} · a.n. ${esc(a.name)}</option>`).join("")}
+            </select>
+            <button class="btn small" onclick="applySavedAccount('${q.id}')">Use</button>
+          </div></div>
+        <div class="field-row c3">
+          <div class="field" style="margin-bottom:0"><label>Bank</label><input value="${esc(q.extra?.payBank||"")}" placeholder="e.g. BCA" onchange="exSet('${q.id}','payBank',this.value)"></div>
+          <div class="field" style="margin-bottom:0"><label>Account number</label><input value="${esc(q.extra?.payNo||"")}" onchange="exSet('${q.id}','payNo',this.value)"></div>
+          <div class="field" style="margin-bottom:0"><label>Account name (a.n.)</label><input value="${esc(q.extra?.payName||"")}" onchange="exSet('${q.id}','payName',this.value)"></div>
+        </div>
+        <div style="margin-top:10px"><button class="btn small" onclick="saveAccountToDistributor('${q.id}')" ${q.extra?.distributor?"":"disabled title='Choose the distributor first'"}>💾 Save this account to ${esc(q.extra?.distributor||"distributor")} for reuse</button></div>
+        `:""}
       </div>`:""}
       <div class="sub" style="color:var(--muted);font-size:12px">Header on the PDF will show: export date · project “${esc(p.name)}” · ${esc(p.location||"no location")} · the number above · issuer ${esc(projCompany(p).name)}.</div>
     </div>
@@ -1658,6 +1691,31 @@ function sectionHTML(q,s,si){
 function qSet(id,k,v){ getQuote(id)[k]=v; setDirty(true); render(); }
 function qSetSilent(id,k,v){ getQuote(id)[k]=v; setDirty(true); }
 function exSet(id,k,v){ const q=getQuote(id); q.extra=q.extra||{}; q.extra[k]=v; setDirty(true); }
+function poSetPaid(id,on){
+  const q=getQuote(id); q.extra=q.extra||{};
+  q.extra.paid=on;
+  if(on&&!q.extra.paidDate) q.extra.paidDate=todayISO();
+  if(on&&!q.extra.payMethod) q.extra.payMethod="Transfer";
+  setDirty(true); render();
+}
+function applySavedAccount(qid){
+  const q=getQuote(qid), i=$("#poAccSel").value;
+  if(i==="") return;
+  const acc=(getDistributor(q.extra?.distributor)?.bankAccounts||[])[Number(i)];
+  if(!acc) return;
+  q.extra.payBank=acc.bank; q.extra.payNo=acc.no; q.extra.payName=acc.name;
+  setDirty(true); render();
+}
+async function saveAccountToDistributor(qid){
+  const q=getQuote(qid), d=getDistributor(q.extra?.distributor);
+  if(!d) return alert("Choose the PO's distributor first.");
+  const acc={bank:(q.extra?.payBank||"").trim(),no:(q.extra?.payNo||"").trim(),name:(q.extra?.payName||"").trim()};
+  if(!acc.bank&&!acc.no) return alert("Fill in at least the bank and account number.");
+  d.bankAccounts=d.bankAccounts||[];
+  if(d.bankAccounts.some(a=>a.no===acc.no&&a.bank.toLowerCase()===acc.bank.toLowerCase())) return toast("Account already saved for "+d.name);
+  d.bankAccounts.push(acc);
+  await persist(saveDistributors,"Account saved to "+d.name); render();
+}
 function setDiscount(id,k,v){ const q=getQuote(id); q.discount=q.discount||{type:"percent",value:0}; q.discount[k]=v; setDirty(true); render(); }
 function addSection(id){ getQuote(id).sections.push({name:"New Section",items:[]}); setDirty(true); render(); }
 function mergeSections(id){
@@ -2014,6 +2072,7 @@ function printQuote(qid){
   if(isMOS&&q.extra?.refQuote) meta.push(["Ref. quotation",q.extra.refQuote]);
   $("#printArea").innerHTML=`<div class="p-doc">
     ${docHeaderHTML(title,p,meta)}
+    ${isPO&&q.extra?.paid?`<div style="border:1.4pt solid #0A5C43;color:#0A5C43;display:inline-block;padding:3px 12px;font-weight:800;letter-spacing:.14em;margin-bottom:8px">LUNAS / PAID — ${fmtDate(q.extra.paidDate)}${q.extra.payMethod?" · "+esc(q.extra.payMethod):""}${q.extra.payBank?" · "+esc(q.extra.payBank)+" "+esc(q.extra.payNo||"")+(q.extra.payName?" a.n. "+esc(q.extra.payName):""):""}</div>`:""}
     ${isPO?`<div style="border:1pt solid #111;padding:8px 10px;margin-bottom:10px;font-size:11px">
       <strong>TO — ${esc(q.extra?.distributor||"(distributor)")}</strong>
       ${dist?`<div style="color:#333;margin-top:2px">${dist.contact?"Attn: "+esc(dist.contact)+" · ":""}${esc(dist.phone||"")}${dist.email?" · "+esc(dist.email):""}${dist.address?"<br>"+esc(dist.address):""}</div>`:""}
