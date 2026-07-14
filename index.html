@@ -460,7 +460,7 @@ const isEngineerOnly=()=>!!CURRENT_USER&&CURRENT_USER.roles.includes("engineer")
   &&!["admin","adminproject","finance","purchasing"].some(r=>CURRENT_USER.roles.includes(r));
 const canSeeProject=p=>allowedCompanyIds().includes(p.companyId||DB.companies[0]?.id)
   &&(!isEngineerOnly()||(p.engineers||[]).includes(CURRENT_USER.id));
-const docPerm=k=>({quote:"quote",rap:"rap",invoice:"billing",receipt:"billing",po:"po",sj:"sj",mos:"ba",bap:"ba",bast:"ba"}[k||"quote"]);
+const docPerm=k=>({quote:"quote",rap:"rap",so:"billing",invoice:"billing",receipt:"billing",po:"po",sj:"sj",mos:"ba",bap:"ba",bast:"ba"}[k||"quote"]);
 /* company-scoped catalogue: empty companies list = visible to ALL (legacy rows) */
 const visibleTo=(rec,cid)=>!(rec.companies&&rec.companies.length)||rec.companies.includes(cid);
 const costOf=(e,cid)=>{const v=Number(e.costs?.[cid]); return v>0?v:(Number(e.cost)||0);};
@@ -479,7 +479,7 @@ const PSTATUS={
   cancelled:  {label:"Cancelled",  fg:"#FFFFFF", bg:"#8A948C"}
 };
 const statusPill=st=>{const x=PSTATUS[st]||PSTATUS.onquote;return `<span class="pill" style="background:${x.bg};color:${x.fg}">${x.label}</span>`;};
-const KIND_LABEL={quote:"Quotation",rap:"RAP",invoice:"Invoice",receipt:"Receipt",po:"Purchase Order",sj:"Surat Jalan",mos:"Material on Site",bap:"BA Progress",bast:"BAST"};
+const KIND_LABEL={quote:"Quotation",rap:"RAP",so:"Sales Order",invoice:"Invoice",receipt:"Receipt",po:"Purchase Order",sj:"Surat Jalan",mos:"Material on Site",bap:"BA Progress",bast:"BAST"};
 function terbilang(n){
   n=Math.floor(Math.abs(Number(n)||0));
   const a=["","satu","dua","tiga","empat","lima","enam","tujuh","delapan","sembilan","sepuluh","sebelas"];
@@ -1230,7 +1230,7 @@ function renderProject(v,p){
     </div>
     <div class="tabs">
       ${tabsAllowed.docs?`<button class="tab ${ptab==="docs"?"active":""}" onclick="route.ptab='docs';render()">${can("quote")&&can("rap")?"Quotations & RAP":can("quote")?"Quotations":"RAP"}</button>`:""}
-      ${tabsAllowed.billing?`<button class="tab ${ptab==="billing"?"active":""}" onclick="route.ptab='billing';render()">Invoices & Receipts</button>`:""}
+      ${tabsAllowed.billing?`<button class="tab ${ptab==="billing"?"active":""}" onclick="route.ptab='billing';render()">SO · Invoices · Receipts</button>`:""}
       ${tabsAllowed.po?`<button class="tab ${ptab==="po"?"active":""}" onclick="route.ptab='po';render()">Purchase Orders</button>`:""}
       ${tabsAllowed.sj?`<button class="tab ${ptab==="sj"?"active":""}" onclick="route.ptab='sj';render()">Surat Jalan</button>`:""}
       ${tabsAllowed.ba?`<button class="tab ${ptab==="ba"?"active":""}" onclick="route.ptab='ba';render()">BA & Handover</button>`:""}
@@ -1247,6 +1247,8 @@ function docRowActions(q,kind){
   return `${kind==="quote"&&can("rap")?`<button class="btn ghost small" title="Create RAP from this quotation" onclick="event.stopPropagation();deriveRAP('${q.id}')">→ RAP</button>`:""}
     ${kind==="rap"&&can("po")?`<button class="btn ghost small" title="Create a purchase order from selected items" onclick="event.stopPropagation();openPOFromRAP('${q.id}')">→ PO</button>`:""}
     ${kind==="invoice"&&can("billing")?`<button class="btn ghost small" title="Create receipt for this invoice" onclick="event.stopPropagation();receiptFromInvoice('${q.id}')">→ Receipt</button>`:""}
+    ${kind==="quote"&&can("billing")?`<button class="btn ghost small" title="Create sales order from this quotation" onclick="event.stopPropagation();doSOFromQuote('${q.id}')">→ SO</button>`:""}
+    ${kind==="so"&&can("billing")?`<button class="btn ghost small" title="Create invoice from this sales order" onclick="event.stopPropagation();invoiceFromSO('${q.id}')">→ Invoice</button>`:""}
     ${kind==="quote"&&can("sj")?`<button class="btn ghost small" title="Create surat jalan (delivery note) from this quotation" onclick="event.stopPropagation();openSJFromQuote('${q.id}')">→ SJ</button>`:""}
     <button class="btn ghost small" onclick="event.stopPropagation();duplicateQuote('${q.id}')">Duplicate</button>
     <button class="btn ghost small danger" onclick="event.stopPropagation();deleteQuote('${q.id}')">Delete</button>`;
@@ -1391,10 +1393,16 @@ function renderProjectDocs(b,p){
     </div>`:""}`;
 }
 function renderProjectBilling(b,p){
-  const invs=kindQuotes(p.id,"invoice"), recs=kindQuotes(p.id,"receipt");
+  const sos=kindQuotes(p.id,"so"), invs=kindQuotes(p.id,"invoice"), recs=kindQuotes(p.id,"receipt");
   const paid=recs.reduce((a,r)=>a+(Number(r.extra?.amount)||0),0);
   const billed=invs.reduce((a,q)=>a+quoteGrand(q),0);
+  const soTotal=sos.reduce((a,q)=>a+quoteGrand(q),0);
   b.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="eyebrow">Sales orders (confirmed orders — record the client's PO/SPK here)</span>
+      <button class="btn primary small" onclick="pickQuoteForSO('${p.id}')">+ SO from quotation</button>
+    </div>
+    ${docTable(sos,"so","When the client approves a quotation and issues their PO/SPK, create a Sales Order from it — invoices then derive from the SO.")}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <span class="eyebrow">Invoices to client</span>
       <button class="btn primary small" onclick="newQuote('${p.id}','invoice')">+ New invoice</button>
@@ -1405,9 +1413,10 @@ function renderProjectBilling(b,p){
       <button class="btn primary small" onclick="newQuote('${p.id}','receipt')">+ New receipt</button>
     </div>
     ${docTable(recs,"receipt","Create a receipt manually, or use “→ Receipt” on a paid invoice.")}
-    ${(invs.length||recs.length)?`
+    ${(sos.length||invs.length||recs.length)?`
     <div class="card card-pad" style="max-width:560px"><div class="totals" style="max-width:none">
-      <div class="line"><span>Total invoiced</span><span class="num">${fmtRp(billed)}</span></div>
+      ${sos.length?`<div class="line"><span>Total sales orders</span><span class="num">${fmtRp(soTotal)}</span></div>`:""}
+      <div class="line"><span>Total invoiced${sos.length?" ("+fmtN(soTotal>0?billed/soTotal*100:0)+"% of SO)":""}</span><span class="num">${fmtRp(billed)}</span></div>
       <div class="line"><span>Total receipted (paid)</span><span class="num">${fmtRp(paid)}</span></div>
       <div class="line grand"><span>Outstanding</span><span class="num" style="color:${billed-paid>0?"var(--red)":"var(--accent-dark)"}">${fmtRp(billed-paid)}</span></div>
     </div></div>`:""}`;
@@ -1682,6 +1691,41 @@ async function doPOFromRAP(rapId){
   await persist(saveQuotes,"PO created with "+picked.length+" item(s)");
   go({view:"quote",quoteId:q.id});
 }
+function pickQuoteForSO(pid){
+  const quotes=kindQuotes(pid,"quote");
+  if(!quotes.length) return alert("No quotations in this project — a Sales Order confirms an approved quotation.");
+  if(quotes.length===1) return doSOFromQuote(quotes[0].id);
+  openModal("Create sales order — choose approved quotation",`
+    <div class="field"><label>Quotation</label>
+      <select id="so_src">${quotes.map(x=>`<option value="${x.id}">${esc(x.quoteNumber||x.title)} — ${fmtRp(quoteGrand(x))}${x.extra?.final?" · FINAL":""}</option>`).join("")}</select></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="doSOFromQuote($('#so_src').value)">Create SO</button>`);
+}
+async function doSOFromQuote(quoteId){
+  const src=getQuote(quoteId);
+  closeModal();
+  const n=kindQuotes(src.projectId,"so").length+1;
+  const q={id:uid(),projectId:src.projectId,quoteNumber:"",title:"SO "+n+" — "+(src.quoteNumber||src.title),
+    date:todayISO(),tax:src.tax,kind:"so",discount:JSON.parse(JSON.stringify(src.discount||{type:"percent",value:0})),
+    sections:JSON.parse(JSON.stringify(src.sections)),notes:src.notes,
+    extra:{refQuote:src.quoteNumber||src.title,refQuoteId:src.id,clientPO:"",paymentTerms:"",deliveryTerms:""}};
+  DB.quotations.push(q);
+  route.ptab="billing";
+  await persist(saveQuotes,"Sales order created — record the client's PO/SPK number");
+  go({view:"quote",quoteId:q.id});
+}
+async function invoiceFromSO(soId){
+  const so=getQuote(soId), p=getProject(so.projectId);
+  const n=kindQuotes(so.projectId,"invoice").length+1;
+  const q={id:uid(),projectId:so.projectId,quoteNumber:"",title:"Invoice "+n+" — "+(so.quoteNumber||so.title),
+    date:todayISO(),tax:so.tax,kind:"invoice",discount:JSON.parse(JSON.stringify(so.discount||{type:"percent",value:0})),
+    sections:[{name:"Billing Items",items:[]}],notes:"",
+    extra:{billTo:p?.client||"",refQuote:so.quoteNumber||so.title,refSOId:so.id}};
+  DB.quotations.push(q);
+  route.ptab="billing";
+  await persist(saveQuotes,"Invoice created — use “Import” inside it for full BoQ or % billing of the SO");
+  go({view:"quote",quoteId:q.id});
+}
 async function receiptFromInvoice(invId){
   const inv=getQuote(invId), p=getProject(inv.projectId);
   const q={id:uid(),projectId:inv.projectId,quoteNumber:"",title:"Receipt — "+(inv.quoteNumber||inv.title),
@@ -1782,7 +1826,7 @@ function renderQuote(v,q,p){
     <div class="page-head">
       <div>
         <button class="btn ghost small" onclick="go({view:'project',projectId:'${p.id}'})" style="margin-bottom:8px;padding-left:0">← ${esc(p.name)}</button>
-        <span class="eyebrow" ${q.kind==="rap"?'style="color:var(--amber)"':""}>${q.kind==="rap"?"RAP / Budget estimation (internal)":q.kind==="invoice"?"Invoice":q.kind==="po"?"Purchase order":q.kind==="sj"?"Surat jalan / delivery note":q.kind==="mos"?"Material on site approval":"Quotation"} · ${esc(projCompany(p).name)}</span>
+        <span class="eyebrow" ${q.kind==="rap"?'style="color:var(--amber)"':""}>${q.kind==="rap"?"RAP / Budget estimation (internal)":q.kind==="invoice"?"Invoice":q.kind==="po"?"Purchase order":q.kind==="sj"?"Surat jalan / delivery note":q.kind==="mos"?"Material on site approval":q.kind==="so"?"Sales order (confirmed)":"Quotation"} · ${esc(projCompany(p).name)}</span>
         <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(480px,80vw)" value="${esc(q.title)}" placeholder="Quotation title / option name" onchange="qSet('${q.id}','title',this.value)"></h1>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1817,6 +1861,13 @@ function renderQuote(v,q,p){
         <div class="field"><label>Driver</label><input value="${esc(q.extra?.driver||"")}" onchange="exSet('${q.id}','driver',this.value)"></div>
       </div>
       <div class="sub" style="font-size:12px;color:var(--muted);margin-bottom:8px">Ref. quotation: <strong>${esc(q.extra?.refQuote||"—")}</strong> · prices are never shown on a surat jalan.</div>`:""}
+      ${q.kind==="so"?`
+      <div class="field-row c3">
+        <div class="field"><label>Client's PO / SPK number</label><input value="${esc(q.extra?.clientPO||"")}" placeholder="the client's purchase order no." onchange="exSet('${q.id}','clientPO',this.value)"></div>
+        <div class="field"><label>Payment terms</label><input value="${esc(q.extra?.paymentTerms||"")}" placeholder="e.g. 30% DP, 50% termin, 20% BAST" onchange="exSet('${q.id}','paymentTerms',this.value)"></div>
+        <div class="field"><label>Delivery terms</label><input value="${esc(q.extra?.deliveryTerms||"")}" placeholder="e.g. 6–8 weeks after DP" onchange="exSet('${q.id}','deliveryTerms',this.value)"></div>
+      </div>
+      <div class="sub" style="font-size:12px;color:var(--muted);margin-bottom:8px">Ref. quotation: <strong>${esc(q.extra?.refQuote||"—")}</strong></div>`:""}
       ${q.kind==="mos"?`
       <div class="sub" style="font-size:12px;color:var(--muted);margin-bottom:8px">Ref. quotation: <strong>${esc(q.extra?.refQuote||"—")}</strong> · quantities represent material currently on site — no prices are shown; the printed form has a check column and site-notes column for on-site verification with the client.</div>`:""}
       ${q.kind==="po"?`
@@ -2042,11 +2093,11 @@ async function saveNotesAsTemplate(qid){
 /* ---------- invoice: import from quotation ---------- */
 function openInvoiceImport(invId){
   const inv=getQuote(invId);
-  const quotes=kindQuotes(inv.projectId,"quote");
-  if(!quotes.length) return alert("No quotations in this project to import from.");
+  const srcs=[...kindQuotes(inv.projectId,"so"),...kindQuotes(inv.projectId,"quote")];
+  if(!srcs.length) return alert("No sales orders or quotations in this project to import from.");
   openModal("Import into invoice",`
-    <div class="field"><label>Source quotation</label>
-      <select id="inv_src">${quotes.map(x=>`<option value="${x.id}">${esc(x.quoteNumber||x.title)} — ${fmtRp(quoteGrand(x))}</option>`).join("")}</select></div>
+    <div class="field"><label>Source (sales order or quotation)</label>
+      <select id="inv_src">${srcs.map(x=>`<option value="${x.id}" ${inv.extra?.refSOId===x.id?"selected":""}>${x.kind==="so"?"SO · ":""}${esc(x.quoteNumber||x.title)} — ${fmtRp(quoteGrand(x))}</option>`).join("")}</select></div>
     <div class="field"><label>Billing mode</label>
       <select id="inv_mode">
         <option value="pct" selected>Percentage line (e.g. down payment / progress payment)</option>
@@ -2388,10 +2439,10 @@ function printQuote(qid){
     });
     rows+=`<tr class="subtotal"><td colspan="7" style="text-align:right">Subtotal — ${esc(s.name)}</td><td class="num-p" style="text-align:right">${fmtRp(sectionTotal(s))}</td></tr>`;
   });
-  const isRap=q.kind==="rap", isInv=q.kind==="invoice", isPO=q.kind==="po", isSJ=q.kind==="sj", isMOS=q.kind==="mos";
+  const isRap=q.kind==="rap", isInv=q.kind==="invoice", isPO=q.kind==="po", isSJ=q.kind==="sj", isMOS=q.kind==="mos", isSO=q.kind==="so";
   if(isSJ) return printSJ(q,p);
   if(isMOS) return printMOS(q,p);
-  const title=isRap?"PROJECT BUDGET (RAP)":isInv?"INVOICE":isPO?"PURCHASE ORDER":isMOS?"MATERIAL ON SITE APPROVAL":"QUOTATION";
+  const title=isRap?"PROJECT BUDGET (RAP)":isInv?"INVOICE":isPO?"PURCHASE ORDER":isSO?"SALES ORDER":"QUOTATION";
   const dist=isPO?getDistributor(q.extra?.distributor):null;
   const meta=[["Project",p.name],["Location",p.location||"—"],
       [KIND_LABEL[q.kind||"quote"]+" no.",q.quoteNumber||"—"],["Title",q.title||"—"],
@@ -2399,6 +2450,12 @@ function printQuote(qid){
   if(isInv) meta.splice(2,0,["Bill to",q.extra?.billTo||p.client||"—"]);
   if(isPO){ meta.splice(2,0,["Ship to",q.extra?.shipTo||"—"]); if(q.extra?.refRAP) meta.push(["Ref. RAP",q.extra.refRAP]); }
   if(isMOS&&q.extra?.refQuote) meta.push(["Ref. quotation",q.extra.refQuote]);
+  if(isSO){
+    meta.splice(2,0,["Client PO / SPK",q.extra?.clientPO||"—"]);
+    if(q.extra?.refQuote) meta.push(["Ref. quotation",q.extra.refQuote]);
+    if(q.extra?.paymentTerms) meta.push(["Payment terms",q.extra.paymentTerms]);
+    if(q.extra?.deliveryTerms) meta.push(["Delivery terms",q.extra.deliveryTerms]);
+  }
   $("#printArea").innerHTML=`<div class="p-doc">
     ${docHeaderHTML(title,p,meta)}
     ${isPO&&q.extra?.paid?`<div style="border:1.4pt solid #0A5C43;color:#0A5C43;display:inline-block;padding:3px 12px;font-weight:800;letter-spacing:.14em;margin-bottom:8px">LUNAS / PAID — ${fmtDate(q.extra.paidDate)}${q.extra.payMethod?" · "+esc(q.extra.payMethod):""}${q.extra.payBank?" · "+esc(q.extra.payBank)+" "+esc(q.extra.payNo||"")+(q.extra.payName?" a.n. "+esc(q.extra.payName):""):""}</div>`:""}
@@ -2420,7 +2477,7 @@ function printQuote(qid){
     ${isInv&&projCompany(p).bank?`<div style="border:1pt solid #111;padding:8px 10px;margin-top:12px;font-size:11px;width:60%">
       <strong>PAYMENT — PLEASE TRANSFER TO:</strong><div style="white-space:pre-wrap;margin-top:3px">${esc(projCompany(p).bank)}</div></div>`:""}
     ${q.notes.trim()?`<div class="p-notes"><h4>Notes & Terms</h4><div>${esc(q.notes)}</div></div>`:""}
-    ${isPO?poSignHTML(p,q):signBlockHTML(p,isInv?"Received by":isMOS?"Disetujui oleh / Approved by":"Approved by",isRap?"Management":isInv?"":(p.client||""))}
+    ${isPO?poSignHTML(p,q):signBlockHTML(p,isInv?"Received by":isMOS?"Disetujui oleh / Approved by":isSO?"Confirmed by / Client":"Approved by",isRap?"Management":isInv?"":(p.client||""))}
   </div>`;
   doPrint((q.quoteNumber||q.title||KIND_LABEL[q.kind||"quote"])+" - "+p.name);
 }
@@ -2656,7 +2713,7 @@ function quoteAOA(q,p){
   const isRap=q.kind==="rap", C=projCompany(p);
   const aoa=[
     [C.name],[C.tagline],[],
-    [isRap?"PROJECT BUDGET (RAP)":q.kind==="invoice"?"INVOICE":q.kind==="po"?"PURCHASE ORDER":"QUOTATION"],
+    [isRap?"PROJECT BUDGET (RAP)":q.kind==="invoice"?"INVOICE":q.kind==="po"?"PURCHASE ORDER":q.kind==="so"?"SALES ORDER":"QUOTATION"],
     ["Project",p.name],["Location",p.location||""],["Number",q.quoteNumber||""],
     ["Title",q.title||""],["Date",q.date||""],["Exported",todayISO()],
     ...(q.kind==="invoice"?[["Bill to",q.extra?.billTo||p.client||""]]:[]),
