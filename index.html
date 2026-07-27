@@ -309,8 +309,11 @@ async function ensureToken(){ if(!token||Date.now()>tokenExp) await requestToken
 async function signIn(){
   const errBox=$("#loginErr"); errBox.style.display="none";
   const _signinT0=performance.now();
+  let _mk=_signinT0; const _ph={};
+  const _lap=k=>{ _ph[k]=Math.round(performance.now()-_mk); _mk=performance.now(); };
   try{
     await requestToken("consent");
+    _lap("Google sign-in (your clicks + consent)");
     let uiRes;
     try{
       uiRes=await fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+token}});
@@ -318,11 +321,14 @@ async function signIn(){
       throw new Error("Network blocked while calling www.googleapis.com (userinfo) — usually an ad blocker / tracking protection. Try Incognito with extensions off, or whitelist this site.");
     }
     const ui=await uiRes.json();
+    _lap("Account lookup");
     userEmail=ui.email||""; userPic=ui.picture||"";
     if(CONFIG.ALLOWED_EMAILS.length && !CONFIG.ALLOWED_EMAILS.map(e=>e.toLowerCase()).includes(userEmail.toLowerCase()))
       throw new Error(userEmail+" is not on the authorized list for this tool.");
     await ensureTabs();
+    _lap("Sheet structure check");
     await loadAll();
+    _lap("Loading your data");
     if(!DB.companies.length){
       DB.companies.push({id:uid(),name:CONFIG.COMPANY.name,tagline:CONFIG.COMPANY.tagline,address:CONFIG.COMPANY.address,contact:CONFIG.COMPANY.contact,bank:""});
       await saveCompanies();
@@ -337,7 +343,8 @@ async function signIn(){
     if(!allowedCos.length) throw new Error("Your account has no company issuer assigned. Ask the administrator to grant company access in the Users tab.");
     ACTIVE_COMPANY=allowedCos.length===1?allowedCos[0]:null;
     route.view=ACTIVE_COMPANY?"home":"companyselect";
-    SIGNIN_MS=Math.round(performance.now()-_signinT0);
+    _lap("Setup");
+    SIGNIN_MS=Math.round(performance.now()-_signinT0); SIGNIN_PHASES=_ph;
     if(pollTimer) clearInterval(pollTimer);
     pollTimer=setInterval(pollChanges,60000);
     pollChanges();
@@ -360,7 +367,7 @@ function signOut(){
 const API="https://sheets.googleapis.com/v4/spreadsheets/";
 /* --- performance instrumentation (read-only, no effect on data) --- */
 let NET={bytes:0,calls:0};
-let LOADSTATS=null, SIGNIN_MS=0;
+let LOADSTATS=null, SIGNIN_MS=0, SIGNIN_PHASES=null;
 const kb=n=>n<1024?n+" B":n<1048576?(n/1024).toFixed(1)+" KB":(n/1048576).toFixed(2)+" MB";
 async function api(path,opts={}){
   await ensureToken();
@@ -391,10 +398,20 @@ async function ensureTabs(){
   if(missing.length){
     await api(":batchUpdate",{method:"POST",body:JSON.stringify({requests:missing.map(t=>({addSheet:{properties:{title:t}}}))})});
   }
-  // always rewrite header rows so schema upgrades (new columns) reach existing sheets
-  for(const t of Object.keys(SHEETS)){
-    await api(`/values/${encodeURIComponent(t)}!A1?valueInputOption=RAW`,{method:"PUT",
-      body:JSON.stringify({values:[SHEETS[t]]})});
+  // Headers are only rewritten when they actually differ (schema upgrade or a new
+  // tab). Reading all header rows costs one request; on a normal sign-in nothing
+  // is written at all — previously this was 11 sequential writes every time.
+  const tabs=Object.keys(SHEETS);
+  const got=await api("/values:batchGet?"+tabs.map(t=>"ranges="+encodeURIComponent(t+"!1:1")).join("&"));
+  const data=[];
+  (got.valueRanges||[]).forEach((v,i)=>{
+    const cur=(v.values&&v.values[0])||[], want=SHEETS[tabs[i]];
+    const same=cur.length>=want.length&&want.every((h,j)=>String(cur[j]||"")===h);
+    if(!same) data.push({range:tabs[i]+"!A1",values:[want]});
+  });
+  if(data.length){
+    await api("/values:batchUpdate",{method:"POST",
+      body:JSON.stringify({valueInputOption:"RAW",data})});
   }
 }
 async function loadAll(){
@@ -938,6 +955,72 @@ async function deleteEquipment(id){
 }
 
 /* ================= PERFORMANCE DIAGNOSTICS (admin) ================= */
+function diagData(){
+  const L=LOADSTATS; if(!L) return null;
+  const docs=DB.quotations.length, projs=DB.projects.length;
+  const qTab=L.tabs.find(t=>t.name==="Quotations")||{bytes:0};
+  const perDoc=docs?qTab.bytes/docs:0;
+  const bigCell=Math.max(...L.tabs.map(t=>t.maxCell));
+  let verdict,vcol;
+  if(L.bytes<600*1024&&L.ms<2500){ verdict="COMFORTABLE — no restructuring needed yet. Re-check when documents triple."; vcol="var(--accent-dark)"; }
+  else if(L.bytes<1.5*1048576&&L.ms<5000){ verdict="ACCEPTABLE — starting to grow. Archiving finished projects would buy plenty of time."; vcol="var(--amber)"; }
+  else { verdict="HEAVY — worth splitting metadata from BoQ bodies so lists load without full documents."; vcol="var(--red)"; }
+  const project=m=>{const b=L.bytes+perDoc*docs*(m-1);
+    return {docs:docs*m,bytes:b,ms:L.bytes>0?Math.round(L.ms*(b/L.bytes)):0};};
+  const heavy=DB.quotations.map(q=>({q,len:JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind,discount:q.discount,extra:q.extra}).length}))
+    .sort((a,b)=>b.len-a.len).slice(0,5);
+  return {L,docs,projs,verdict,vcol,bigCell,cellPct:Math.round(bigCell/50000*100),
+          heavy,rows:L.tabs.filter(t=>t.rows).sort((a,b)=>b.bytes-a.bytes),
+          p3:project(3),p10:project(10)};
+}
+function printDiagnostics(){
+  const d=diagData(); if(!d) return;
+  const co=DB.companies.find(c=>c.id===ACTIVE_COMPANY);
+  const ph=SIGNIN_PHASES||{};
+  $("#printArea").innerHTML=`<div class="p-doc">
+    <div class="p-head">
+      <div class="p-co">AV Quotation Builder<small>Performance diagnostics report
+${esc(co?.name||"")}
+${esc(userEmail)}</small></div>
+      <div class="p-doc-title"><h2>DIAGNOSTICS</h2></div>
+    </div>
+    <table class="p-meta"><tbody>
+      <tr><td class="k">Generated</td><td>: ${new Date().toLocaleString("id-ID")}</td></tr>
+      <tr><td class="k">Documents</td><td>: ${d.docs} across ${d.projs} projects</td></tr>
+      <tr><td class="k">Sign-in payload</td><td>: ${kb(d.L.bytes)}</td></tr>
+      <tr><td class="k">Data fetch</td><td>: ${(d.L.ms/1000).toFixed(2)} s</td></tr>
+      <tr><td class="k">Full sign-in</td><td>: ${SIGNIN_MS?(SIGNIN_MS/1000).toFixed(1)+" s":"—"}</td></tr>
+      <tr><td class="k">Verdict</td><td>: <strong>${esc(d.verdict)}</strong></td></tr>
+    </tbody></table>
+    ${Object.keys(ph).length?`<h4 style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin:10px 0 4px">Sign-in phases</h4>
+    <table class="p-table"><thead><tr><th>Phase</th><th style="width:90px;text-align:right">Time</th></tr></thead>
+      <tbody>${Object.entries(ph).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="num-p" style="text-align:right">${(v/1000).toFixed(2)} s</td></tr>`).join("")}</tbody></table>`:""}
+    <h4 style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin:12px 0 4px">Where the data sits</h4>
+    <table class="p-table">
+      <thead><tr><th>Sheet tab</th><th style="width:60px;text-align:right">Rows</th><th style="width:80px;text-align:right">Size</th><th style="width:60px;text-align:right">Share</th></tr></thead>
+      <tbody>${d.rows.map(t=>`<tr><td>${esc(t.name)}</td><td class="num-p" style="text-align:right">${t.rows}</td>
+        <td class="num-p" style="text-align:right">${kb(t.bytes)}</td>
+        <td class="num-p" style="text-align:right">${d.L.bytes?Math.round(t.bytes/d.L.bytes*100):0}%</td></tr>`).join("")}</tbody></table>
+    <h4 style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin:12px 0 4px">Growth projection</h4>
+    <table class="p-table">
+      <thead><tr><th>Scenario</th><th style="width:80px;text-align:right">Documents</th><th style="width:90px;text-align:right">Payload</th><th style="width:80px;text-align:right">Fetch</th></tr></thead>
+      <tbody>
+        <tr><td>Today</td><td class="num-p" style="text-align:right">${d.docs}</td><td class="num-p" style="text-align:right">${kb(d.L.bytes)}</td><td class="num-p" style="text-align:right">${(d.L.ms/1000).toFixed(2)} s</td></tr>
+        <tr><td>3× growth</td><td class="num-p" style="text-align:right">${d.p3.docs}</td><td class="num-p" style="text-align:right">~${kb(d.p3.bytes)}</td><td class="num-p" style="text-align:right">~${(d.p3.ms/1000).toFixed(1)} s</td></tr>
+        <tr><td>10× growth</td><td class="num-p" style="text-align:right">${d.p10.docs}</td><td class="num-p" style="text-align:right">~${kb(d.p10.bytes)}</td><td class="num-p" style="text-align:right">~${(d.p10.ms/1000).toFixed(1)} s</td></tr>
+      </tbody></table>
+    <h4 style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin:12px 0 4px">Cell-size headroom — limit 50,000 characters per cell</h4>
+    <p style="font-size:11px;margin:0 0 6px">Largest cell in use: <strong>${d.bigCell.toLocaleString("id-ID")}</strong> characters (${d.cellPct}% of the limit).</p>
+    <table class="p-table">
+      <thead><tr><th>Heaviest documents</th><th>Project</th><th style="width:60px;text-align:right">BoQ lines</th><th style="width:70px;text-align:right">Chars</th><th style="width:60px;text-align:right">Of limit</th></tr></thead>
+      <tbody>${d.heavy.map(h=>`<tr><td>${esc(h.q.quoteNumber||h.q.title||"—")}</td>
+        <td>${esc(getProject(h.q.projectId)?.name||"")}</td>
+        <td class="num-p" style="text-align:right">${(h.q.sections||[]).reduce((a,x)=>a+x.items.length,0)}</td>
+        <td class="num-p" style="text-align:right">${h.len.toLocaleString("id-ID")}</td>
+        <td class="num-p" style="text-align:right">${Math.round(h.len/50000*100)}%</td></tr>`).join("")}</tbody></table>
+  </div>`;
+  doPrint("AV Quotation Builder - diagnostics "+todayISO());
+}
 function openDiagnostics(){
   const L=LOADSTATS;
   if(!L) return alert("No load measurement yet — press ↻ Reload first.");
@@ -970,6 +1053,12 @@ function openDiagnostics(){
     </div>
     <div style="background:${vcol};color:#fff;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:16px">${verdict}</div>
 
+    ${SIGNIN_PHASES?`<span class="eyebrow">Sign-in phases — where the time went</span>
+    <table class="grid" style="margin:8px 0 16px"><tbody>
+      ${Object.entries(SIGNIN_PHASES).map(([k,v])=>`<tr><td>${esc(k)}</td>
+        <td class="t-right num" style="width:90px;font-weight:${v>3000?"700":"400"};color:${v>3000?"var(--amber)":"inherit"}">${(v/1000).toFixed(2)} s</td></tr>`).join("")}
+    </tbody></table>`:""}
+
     <span class="eyebrow">Where the data sits</span>
     <table class="grid" style="margin:8px 0 16px">
       <thead><tr><th>Sheet tab</th><th class="t-right">Rows</th><th class="t-right">Size</th><th class="t-right">Share</th></tr></thead>
@@ -998,7 +1087,8 @@ function openDiagnostics(){
         <td class="t-right num">${h.len.toLocaleString("id-ID")}</td>
         <td class="t-right num" style="color:${h.len>25000?"var(--red)":"var(--muted)"}">${Math.round(h.len/50000*100)}%</td></tr>`).join("")}
       </tbody></table>`,
-    `<button class="btn primary" onclick="closeModal()">Close</button>`,true);
+    `<button class="btn" onclick="const f=printDiagnostics;closeModal();setTimeout(f,60)">⤓ PDF</button>
+     <button class="btn primary" onclick="closeModal()">Close</button>`,true);
 }
 
 /* ================= FINANCIAL DASHBOARD ================= */
