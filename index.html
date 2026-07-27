@@ -931,7 +931,8 @@ function renderDashboardTab(b){
   const co=DB.companies.find(c=>c.id===ACTIVE_COMPANY);
   const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY);
   const pids=new Set(projs.map(p=>p.id));
-  const docs=k=>DB.quotations.filter(q=>pids.has(q.projectId)&&(q.kind||"quote")===k);
+  const sup=supersededIds();   // exclude superseded revisions from all financials
+  const docs=k=>DB.quotations.filter(q=>pids.has(q.projectId)&&(q.kind||"quote")===k&&!sup.has(q.id));
   const quotes=docs("quote"), invs=docs("invoice"), recs=docs("receipt"), pos=docs("po"), raps=docs("rap");
   // KPIs
   const deadIds=new Set(projs.filter(p=>["lost","cancelled"].includes(p.status)).map(p=>p.id));
@@ -1037,7 +1038,7 @@ function renderDashboardTab(b){
             <td class="t-right num" style="font-weight:700;color:${x.q-x.o>=0?"var(--accent-dark)":"var(--red)"}">${(x.q&&x.o)?fmtRpShort(x.q-x.o):"—"}</td></tr>`).join("")
         :'<tr><td colspan="6"><div class="empty">No financial documents yet in this company.</div></td></tr>'}</tbody></table></div>
     </div>
-    <p style="font-size:11.5px;color:var(--muted);margin-top:10px">Hover any figure for the exact amount. Cash in = receipts by receipt date · cash out = POs by payment date · receivables = invoiced − received per project · actual margin compares quotation value to committed PO spend.</p>`;
+    <p style="font-size:11.5px;color:var(--muted);margin-top:10px">Superseded revisions are excluded — only the latest revision of each document counts. Hover any figure for the exact amount. Cash in = receipts by receipt date · cash out = POs by payment date · receivables = invoiced − received per project · actual margin compares quotation value to committed PO spend.</p>`;
 }
 
 /* ================= CLIENTS TAB ================= */
@@ -1429,7 +1430,8 @@ function docTable(list,kind,emptyMsg){
 }
 function renderProjectDocs(b,p){
   const quotes=kindQuotes(p.id,"quote"), raps=kindQuotes(p.id,"rap");
-  const gq=quotes.reduce((a,q)=>a+quoteGrand(q),0), gr=raps.reduce((a,q)=>a+quoteGrand(q),0);
+  const liveQ=liveOnly(quotes), liveR=liveOnly(raps);
+  const gq=liveQ.reduce((a,q)=>a+quoteGrand(q),0), gr=liveR.reduce((a,q)=>a+quoteGrand(q),0);
   b.innerHTML=`
     ${can("quote")?`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -1489,18 +1491,18 @@ function renderProjectDocs(b,p){
     <span class="eyebrow">Project summary</span>
     <div class="card card-pad" style="margin-top:8px;max-width:560px">
       <div class="totals" style="max-width:none">
-        ${can("quote")?quotes.map(q=>`<div class="line"><span>${esc(q.quoteNumber||q.title||"Quotation")}</span><span class="num">${fmtRp(quoteGrand(q))}</span></div>`).join(""):""}
-        ${can("quote")&&quotes.length?`<div class="line" style="font-weight:600;border-top:1px solid var(--line)"><span>Total quotations</span><span class="num">${fmtRp(gq)}</span></div>`:""}
-        ${can("rap")&&raps.length?`<div class="line" style="color:var(--amber)"><span>Total RAP (budget)</span><span class="num">${fmtRp(gr)}</span></div>`:""}
+        ${can("quote")?liveQ.map(q=>`<div class="line"><span>${esc(q.quoteNumber||q.title||"Quotation")}${revBadge(q)}</span><span class="num">${fmtRp(quoteGrand(q))}</span></div>`).join(""):""}
+        ${can("quote")&&liveQ.length?`<div class="line" style="font-weight:600;border-top:1px solid var(--line)"><span>Total quotations</span><span class="num">${fmtRp(gq)}</span></div>`:""}
+        ${can("rap")&&liveR.length?`<div class="line" style="color:var(--amber)"><span>Total RAP (budget)</span><span class="num">${fmtRp(gr)}</span></div>`:""}
         ${(can("quote")&&can("rap")&&quotes.length&&raps.length)?`<div class="line grand"><span>Est. margin (quote − RAP)</span><span class="num" style="color:${gq-gr>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(gq-gr)}</span></div>`:""}
       </div>
     </div>`:""}`;
 }
 function renderProjectBilling(b,p){
   const sos=kindQuotes(p.id,"so"), invs=kindQuotes(p.id,"invoice"), recs=kindQuotes(p.id,"receipt");
-  const paid=recs.reduce((a,r)=>a+(Number(r.extra?.amount)||0),0);
-  const billed=invs.reduce((a,q)=>a+quoteGrand(q),0);
-  const soTotal=sos.reduce((a,q)=>a+quoteGrand(q),0);
+  const paid=liveOnly(recs).reduce((a,r)=>a+(Number(r.extra?.amount)||0),0);
+  const billed=liveOnly(invs).reduce((a,q)=>a+quoteGrand(q),0);
+  const soTotal=liveOnly(sos).reduce((a,q)=>a+quoteGrand(q),0);
   b.innerHTML=`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <span class="eyebrow">Sales orders (confirmed orders — record the client's PO/SPK here)</span>
@@ -1527,7 +1529,7 @@ function renderProjectBilling(b,p){
 }
 function renderProjectPO(b,p){
   const pos=kindQuotes(p.id,"po");
-  const total=pos.reduce((a,q)=>a+quoteGrand(q),0);
+  const total=liveOnly(pos).reduce((a,q)=>a+quoteGrand(q),0);
   b.innerHTML=`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <span class="eyebrow">Purchase orders to distributors / stores</span>
@@ -1537,7 +1539,7 @@ function renderProjectPO(b,p){
       </div>
     </div>
     ${docTable(pos,"po","Create a PO from RAP items (recommended) — pick the lines to order and the distributor — or start blank.")}
-    ${pos.length?(()=>{const paid=pos.filter(x=>x.extra?.paid).reduce((a,x)=>a+quoteGrand(x),0);
+    ${pos.length?(()=>{const paid=liveOnly(pos).filter(x=>x.extra?.paid).reduce((a,x)=>a+quoteGrand(x),0);
       return `<div class="card card-pad" style="max-width:460px"><div class="totals" style="max-width:none">
       <div class="line"><span>Total purchasing</span><span class="num">${fmtRp(total)}</span></div>
       <div class="line"><span>Paid</span><span class="num" style="color:var(--accent-dark)">${fmtRp(paid)}</span></div>
@@ -1566,8 +1568,8 @@ function pickQuoteForSJ(pid){
 }
 const itemKey=it=>(String(it.brand)+"|"+String(it.series)+"|"+String(it.description)).toLowerCase().trim();
 function deliveredMap(quoteId){
-  const m={};
-  DB.quotations.filter(x=>x.kind==="sj"&&x.extra?.refQuoteId===quoteId).forEach(sj=>
+  const m={}, sup=supersededIds();
+  DB.quotations.filter(x=>x.kind==="sj"&&x.extra?.refQuoteId===quoteId&&!sup.has(x.id)).forEach(sj=>
     sj.sections.forEach(sec=>sec.items.forEach(it=>{ m[itemKey(it)]=(m[itemKey(it)]||0)+(Number(it.qty)||0); })));
   return m;
 }
@@ -2218,6 +2220,16 @@ const revFamily=q=>{const root=revRootOf(q);
   return DB.quotations.filter(x=>revRootOf(x)===root).sort((a,b)=>revNo(a)-revNo(b));};
 const latestRev=q=>{const f=revFamily(q); return f[f.length-1];};
 const isLatestRev=q=>latestRev(q)?.id===q.id;
+/* Superseded revisions must never be counted in money totals — Rev 2 replaces
+   Rev 1, it does not add to it. O(n) lookup built once per use. */
+function supersededIds(){
+  const best={};
+  DB.quotations.forEach(q=>{const r=revRootOf(q); if(!best[r]||revNo(q)>revNo(best[r])) best[r]=q;});
+  const out=new Set();
+  DB.quotations.forEach(q=>{ if(best[revRootOf(q)].id!==q.id) out.add(q.id); });
+  return out;
+}
+const liveOnly=list=>{const sup=supersededIds(); return list.filter(q=>!sup.has(q.id));};
 function revBadge(q){
   const f=revFamily(q); if(f.length<2) return "";
   return isLatestRev(q)
@@ -2902,8 +2914,8 @@ function printSummary(pid,scope){
   scope=scope||"all";
   if(dirty) persist(saveProjects);
   const p=getProject(pid);
-  const quotes=scope==="rap"?[]:kindQuotes(pid,"quote");
-  const raps=scope==="quote"?[]:kindQuotes(pid,"rap");
+  const quotes=scope==="rap"?[]:liveOnly(kindQuotes(pid,"quote"));
+  const raps=scope==="quote"?[]:liveOnly(kindQuotes(pid,"rap"));
   const tbl=(list,label)=>{
     if(!list.length) return "";
     const g=list.reduce((a,q)=>a+quoteGrand(q),0);
@@ -2980,8 +2992,8 @@ function exportSummaryXlsx(pid,scope){
   scope=scope||"all";
   if(needXLSX()) return;
   const p=getProject(pid);
-  const quotes=scope==="rap"?[]:kindQuotes(pid,"quote");
-  const raps=scope==="quote"?[]:kindQuotes(pid,"rap");
+  const quotes=scope==="rap"?[]:liveOnly(kindQuotes(pid,"quote"));
+  const raps=scope==="quote"?[]:liveOnly(kindQuotes(pid,"rap"));
   const wb=XLSX.utils.book_new();
   const sumAOA=[[projCompany(p).name],[(scope==="quote"?"QUOTATION SUMMARY — ":scope==="rap"?"RAP SUMMARY (INTERNAL) — ":"PROJECT SUMMARY — ")+p.name],["Location",p.location||""],["Client",p.client||""],["Exported",todayISO()],[],
     ["Type","No","Number","Title","Date","Subtotal","Discount","PPN 11%","Grand Total"]];
