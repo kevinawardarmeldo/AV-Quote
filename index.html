@@ -308,6 +308,7 @@ function requestToken(prompt){
 async function ensureToken(){ if(!token||Date.now()>tokenExp) await requestToken(""); }
 async function signIn(){
   const errBox=$("#loginErr"); errBox.style.display="none";
+  const _signinT0=performance.now();
   try{
     await requestToken("consent");
     let uiRes;
@@ -336,6 +337,7 @@ async function signIn(){
     if(!allowedCos.length) throw new Error("Your account has no company issuer assigned. Ask the administrator to grant company access in the Users tab.");
     ACTIVE_COMPANY=allowedCos.length===1?allowedCos[0]:null;
     route.view=ACTIVE_COMPANY?"home":"companyselect";
+    SIGNIN_MS=Math.round(performance.now()-_signinT0);
     if(pollTimer) clearInterval(pollTimer);
     pollTimer=setInterval(pollChanges,60000);
     pollChanges();
@@ -356,6 +358,10 @@ function signOut(){
 
 /* ================= Sheets API layer ================= */
 const API="https://sheets.googleapis.com/v4/spreadsheets/";
+/* --- performance instrumentation (read-only, no effect on data) --- */
+let NET={bytes:0,calls:0};
+let LOADSTATS=null, SIGNIN_MS=0;
+const kb=n=>n<1024?n+" B":n<1048576?(n/1024).toFixed(1)+" KB":(n/1048576).toFixed(2)+" MB";
 async function api(path,opts={}){
   await ensureToken();
   let r;
@@ -368,13 +374,15 @@ async function api(path,opts={}){
     throw new Error("Network blocked while calling sheets.googleapis.com — usually an ad blocker / tracking protection (uBlock, Brave Shields, Edge Strict mode). Try Incognito with extensions off, or whitelist this site. Also confirm the Google Sheets API is enabled in your Cloud project.");
   }
   if(r.status===401){ token=null; await ensureToken(); return api(path,opts); }
+  const txt=await r.text();
+  NET.calls++; NET.bytes+=new Blob([txt]).size;
   if(!r.ok){
-    const body=await r.json().catch(()=>({}));
+    let body={}; try{ body=JSON.parse(txt); }catch(e){}
     const msg=body.error?.message||r.statusText;
     if(r.status===403) throw new Error("No access to the Sheet ("+msg+"). Make sure "+userEmail+" has Editor access to the spreadsheet.");
     throw new Error("Sheets API: "+msg);
   }
-  return r.json();
+  return txt?JSON.parse(txt):{};
 }
 async function ensureTabs(){
   const meta=await api("?fields=sheets.properties.title");
@@ -391,9 +399,17 @@ async function ensureTabs(){
 }
 async function loadAll(){
   const ranges=Object.keys(SHEETS).map(t=>`ranges=${encodeURIComponent(t+"!A2:Z")}`).join("&");
+  const _t0=performance.now(), _b0=NET.bytes;
   const res=await api("/values:batchGet?"+ranges);
   const tabNames=Object.keys(SHEETS);
   res.valueRanges.forEach((v,i)=>snapTab(tabNames[i],(v.values||[]).filter(r=>r&&rowId(r))));
+  LOADSTATS={ms:Math.round(performance.now()-_t0), bytes:NET.bytes-_b0,
+    tabs:res.valueRanges.map((v,i)=>{
+      const rows=v.values||[]; let maxCell=0,maxRow=null;
+      rows.forEach(r=>(r||[]).forEach(c=>{const L=String(c??"").length; if(L>maxCell){maxCell=L;maxRow=r;}}));
+      return {name:tabNames[i],rows:rows.length,bytes:new Blob([JSON.stringify(rows)]).size,maxCell,
+              maxLabel:maxRow?String(maxRow[2]||maxRow[3]||maxRow[1]||maxRow[0]||""):""};
+    })};
   const [eq,pr,qu,nt,sp,di,co,us,cl]=res.valueRanges.map(v=>v.values||[]);
   DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||"",distributor:r[9]||"",
     companies:(r[10]||"").split(",").filter(Boolean),costs:(()=>{try{return JSON.parse(r[11]||"{}")}catch(e){return {}}})(),
@@ -662,6 +678,7 @@ function renderHome(v){
       <div class="sub">Data source: Google Sheet · signed in as ${esc(userEmail)}</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" onclick="reloadData()">↻ Reload</button>
+        ${can("users")?`<button class="btn" onclick="openDiagnostics()" title="Measure load size & speed">⚙ Diagnostics</button>`:""}
         ${tab==="projects"?(can("manage")?`<button class="btn primary" onclick="openProjectModal()">+ New project</button>`:"")
          :tab==="dashboard"?""
          :tab==="equipment"?`<button class="btn primary" onclick="openEquipmentModal()">+ Add equipment</button>`
@@ -918,6 +935,70 @@ async function verifyPrice(id){
 async function deleteEquipment(id){
   if(!confirm("Delete this item from the equipment database?")) return;
   DB.equipment=DB.equipment.filter(x=>x.id!==id); render(); await persist(saveEquipment,"Equipment deleted");
+}
+
+/* ================= PERFORMANCE DIAGNOSTICS (admin) ================= */
+function openDiagnostics(){
+  const L=LOADSTATS;
+  if(!L) return alert("No load measurement yet — press ↻ Reload first.");
+  const docs=DB.quotations.length, projs=DB.projects.length;
+  const qTab=L.tabs.find(t=>t.name==="Quotations")||{bytes:0,rows:0,maxCell:0};
+  const perDoc=docs?qTab.bytes/docs:0;
+  const proj=(mult)=>{
+    const b=L.bytes+perDoc*docs*(mult-1);
+    const ms=L.bytes>0?Math.round(L.ms*(b/L.bytes)):0;
+    return `${docs*mult} docs → ~${kb(b)} · ~${(ms/1000).toFixed(1)} s`;
+  };
+  // verdict
+  let verdict,vcol;
+  if(L.bytes<600*1024&&L.ms<2500){ verdict="COMFORTABLE — no restructuring needed yet. Re-check when documents triple."; vcol="var(--accent-dark)"; }
+  else if(L.bytes<1.5*1048576&&L.ms<5000){ verdict="ACCEPTABLE — starting to grow. Archiving finished projects would buy plenty of time."; vcol="var(--amber)"; }
+  else { verdict="HEAVY — worth splitting metadata from BoQ bodies so lists load without full documents."; vcol="var(--red)"; }
+  const bigCell=Math.max(...L.tabs.map(t=>t.maxCell));
+  const cellPct=Math.round(bigCell/50000*100);
+  // heaviest documents (BoQ JSON size vs the 50,000-character cell limit)
+  const heavy=DB.quotations.map(q=>({q,len:JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind,discount:q.discount,extra:q.extra}).length}))
+    .sort((a,b)=>b.len-a.len).slice(0,5);
+  openModal("Performance diagnostics",`
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+      <div class="card card-pad" style="flex:1;min-width:130px"><div class="eyebrow">Sign-in data</div>
+        <div class="num" style="font-size:20px;font-weight:800">${kb(L.bytes)}</div></div>
+      <div class="card card-pad" style="flex:1;min-width:130px"><div class="eyebrow">Data fetch</div>
+        <div class="num" style="font-size:20px;font-weight:800">${(L.ms/1000).toFixed(2)} s</div></div>
+      <div class="card card-pad" style="flex:1;min-width:130px"><div class="eyebrow">Full sign-in</div>
+        <div class="num" style="font-size:20px;font-weight:800">${SIGNIN_MS?(SIGNIN_MS/1000).toFixed(1)+" s":"—"}</div></div>
+    </div>
+    <div style="background:${vcol};color:#fff;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:16px">${verdict}</div>
+
+    <span class="eyebrow">Where the data sits</span>
+    <table class="grid" style="margin:8px 0 16px">
+      <thead><tr><th>Sheet tab</th><th class="t-right">Rows</th><th class="t-right">Size</th><th class="t-right">Share</th></tr></thead>
+      <tbody>${L.tabs.filter(t=>t.rows).sort((a,b)=>b.bytes-a.bytes).map(t=>`
+        <tr><td style="font-weight:600">${esc(t.name)}</td><td class="t-right num">${t.rows}</td>
+        <td class="t-right num">${kb(t.bytes)}</td>
+        <td class="t-right num">${L.bytes?Math.round(t.bytes/L.bytes*100):0}%</td></tr>`).join("")}
+      </tbody></table>
+
+    <span class="eyebrow">If your data keeps growing (rough projection)</span>
+    <div style="font-family:var(--mono);font-size:12px;color:var(--muted);margin:6px 0 16px;line-height:1.8">
+      today: ${docs} docs · ${projs} projects → ${kb(L.bytes)} · ${(L.ms/1000).toFixed(2)} s<br>
+      3×: ${proj(3)}<br>
+      10×: ${proj(10)}
+    </div>
+
+    <span class="eyebrow">Cell-size headroom (Google's hard limit: 50.000 characters per cell)</span>
+    <div style="font-size:12.5px;margin:6px 0 10px;color:${cellPct>50?"var(--red)":"var(--muted)"}">
+      Largest cell in use: <strong>${bigCell.toLocaleString("id-ID")}</strong> characters — ${cellPct}% of the limit.
+      ${cellPct>50?"⚠ A very large BoQ could eventually fail to save. Splitting big projects into several documents avoids this.":"Plenty of room."}
+    </div>
+    <table class="grid">
+      <thead><tr><th>Heaviest documents</th><th class="t-right">BoQ lines</th><th class="t-right">Chars</th><th class="t-right">of limit</th></tr></thead>
+      <tbody>${heavy.map(h=>`<tr><td>${esc(h.q.quoteNumber||h.q.title||"—")} <span style="color:var(--muted);font-size:11.5px">${esc(getProject(h.q.projectId)?.name||"")}</span></td>
+        <td class="t-right num">${(h.q.sections||[]).reduce((a,x)=>a+x.items.length,0)}</td>
+        <td class="t-right num">${h.len.toLocaleString("id-ID")}</td>
+        <td class="t-right num" style="color:${h.len>25000?"var(--red)":"var(--muted)"}">${Math.round(h.len/50000*100)}%</td></tr>`).join("")}
+      </tbody></table>`,
+    `<button class="btn primary" onclick="closeModal()">Close</button>`,true);
 }
 
 /* ================= FINANCIAL DASHBOARD ================= */
