@@ -336,6 +336,9 @@ async function signIn(){
     if(!allowedCos.length) throw new Error("Your account has no company issuer assigned. Ask the administrator to grant company access in the Users tab.");
     ACTIVE_COMPANY=allowedCos.length===1?allowedCos[0]:null;
     route.view=ACTIVE_COMPANY?"home":"companyselect";
+    if(pollTimer) clearInterval(pollTimer);
+    pollTimer=setInterval(pollChanges,60000);
+    pollChanges();
     $("#loginScreen").style.display="none"; $("#app").style.display="block";
     $("#userChip").innerHTML=(userPic?`<img src="${esc(userPic)}" alt="">`:"")+`<span>${esc(userEmail)}</span><span class="pill" style="background:rgba(255,255,255,.12);color:#CFE2D6">${(CURRENT_USER.roles||[]).map(r=>ROLE_LABEL[r]||r).join(" · ")||"no role"}</span>`;
     render();
@@ -389,6 +392,8 @@ async function ensureTabs(){
 async function loadAll(){
   const ranges=Object.keys(SHEETS).map(t=>`ranges=${encodeURIComponent(t+"!A2:Z")}`).join("&");
   const res=await api("/values:batchGet?"+ranges);
+  const tabNames=Object.keys(SHEETS);
+  res.valueRanges.forEach((v,i)=>snapTab(tabNames[i],(v.values||[]).filter(r=>r&&rowId(r))));
   const [eq,pr,qu,nt,sp,di,co,us,cl]=res.valueRanges.map(v=>v.values||[]);
   DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||"",distributor:r[9]||"",
     companies:(r[10]||"").split(",").filter(Boolean),costs:(()=>{try{return JSON.parse(r[11]||"{}")}catch(e){return {}}})(),
@@ -412,11 +417,63 @@ async function loadAll(){
   DB.users=(us||[]).filter(r=>r[0]).map(r=>({id:r[0],email:r[1]||"",roles:(r[2]||"").split(",").filter(Boolean),companies:(r[3]||"").split(",").filter(Boolean),locked:r[4]==="TRUE"}));
   DB.clients=(cl||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",contact:r[2]||"",phone:r[3]||"",email:r[4]||"",address:r[5]||"",notes:r[6]||"",companies:(r[7]||"").split(",").filter(Boolean)}));
 }
+/* ---------------------------------------------------------------
+   Concurrency-safe saving.
+   SNAP holds the exact remote rows as of our last load/save. On save
+   we re-read the tab, merge record-by-record (matched on the ID in
+   column A) and only then write. Result: two people working on
+   different records never overwrite each other, and a genuine
+   same-record collision is reported instead of silently lost.
+   --------------------------------------------------------------- */
+const SNAP={};                                   // tab -> rows as last seen remotely
+let MERGE_REPORT={adopted:0,conflicts:0,added:0,names:[]};
+const rowId=r=>String((r&&r[0])||"").trim();
+const normRow=r=>{const a=(r||[]).map(x=>x===undefined||x===null?"":String(x));
+  while(a.length&&a[a.length-1]==="")a.pop(); return JSON.stringify(a);};
+function snapTab(tab,rows){ SNAP[tab]=rows.map(r=>r.slice()); }
+async function fetchTabRows(tab){
+  const res=await api(`/values/${encodeURIComponent(tab)}!A2:Z`);
+  return (res.values||[]).filter(r=>r&&rowId(r));
+}
 async function saveTab(tab,rows){
-  await api(`/values/${encodeURIComponent(tab)}!A2:Z:clear`,{method:"POST",body:"{}"});
-  if(rows.length){
-    await api(`/values/${encodeURIComponent(tab)}!A2?valueInputOption=RAW`,{method:"PUT",body:JSON.stringify({values:rows})});
+  rows=rows.map(r=>r.map(x=>x===undefined||x===null?"":x));
+  let remote=null;
+  try{ remote=await fetchTabRows(tab); }catch(e){ remote=null; }   // offline-ish: fall back to plain write
+
+  let merged=rows;
+  if(remote){
+    const snap=SNAP[tab]||[];
+    const snapMap=new Map(snap.map(r=>[rowId(r),r]));
+    const remoteMap=new Map(remote.map(r=>[rowId(r),r]));
+    const localIds=new Set(rows.map(rowId));
+    const out=[];
+    for(const r of rows){
+      const id=rowId(r), rem=remoteMap.get(id), sn=snapMap.get(id);
+      const theyChanged = rem&&sn&&normRow(rem)!==normRow(sn);
+      const iChanged    = sn?normRow(r)!==normRow(sn):true;
+      if(theyChanged&&!iChanged){ out.push(rem); MERGE_REPORT.adopted++; }        // keep their edit
+      else{
+        if(theyChanged&&iChanged){ MERGE_REPORT.conflicts++; MERGE_REPORT.names.push(tab+" · "+(r[1]||id)); }
+        out.push(r);                                                              // mine wins
+      }
+    }
+    for(const r of remote){                                                       // records created by others
+      const id=rowId(r);
+      if(!localIds.has(id)&&!snapMap.has(id)){ out.push(r); MERGE_REPORT.added++; }
+    }
+    merged=out;
   }
+
+  // write first, then trim leftovers — never leave the tab empty mid-flight
+  const prevCount=Math.max((SNAP[tab]||[]).length, remote?remote.length:0);
+  if(merged.length){
+    await api(`/values/${encodeURIComponent(tab)}!A2?valueInputOption=RAW`,{method:"PUT",body:JSON.stringify({values:merged})});
+  }
+  if(prevCount>merged.length){
+    const from=2+merged.length, to=1+prevCount;
+    await api(`/values/${encodeURIComponent(tab)}!A${from}:Z${to}:clear`,{method:"POST",body:"{}"});
+  }
+  snapTab(tab,merged);
 }
 const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||"",e.distributor||"",(e.companies||[]).join(","),JSON.stringify(e.costs||{}),JSON.stringify(e.prices||{})]));
 const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||"",JSON.stringify(p.sig||{}),p.companyId||"",p.clientId||"",(p.engineers||[]).join(","),p.status||"onquote"]));
@@ -428,8 +485,40 @@ const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.t
 const saveUsers=()=>saveTab("Users",DB.users.map(u=>[u.id,u.email,u.roles.join(","),u.companies.join(","),u.locked?"TRUE":"FALSE"]));
 const saveClients=()=>saveTab("Clients",DB.clients.map(c=>[c.id,c.name,c.contact,c.phone,c.email,c.address,c.notes,(c.companies||[]).join(",")]));
 async function persist(fn,msg){
-  try{ $("#saveState").textContent="saving…"; await fn(); setDirty(false); toast(msg||"Saved to Google Sheet"); }
+  try{
+    $("#saveState").textContent="saving…";
+    MERGE_REPORT={adopted:0,conflicts:0,added:0,names:[]};
+    await fn();
+    setDirty(false);
+    const r=MERGE_REPORT;
+    if(r.conflicts){
+      await loadAll(); lastSig=""; render();
+      alert("⚠ Saved, but "+r.conflicts+" record(s) were edited by someone else at the same time:\n\n"+
+            r.names.slice(0,6).join("\n")+
+            "\n\nYour version was kept and theirs replaced. The screen has been refreshed — please check those documents with your colleague.");
+    }else if(r.adopted||r.added){
+      await loadAll(); lastSig=""; render();
+      toast((msg||"Saved")+" · merged "+(r.adopted+r.added)+" change(s) from your team");
+    }else toast(msg||"Saved to Google Sheet");
+  }
   catch(e){ $("#saveState").textContent=""; alert("Save failed: "+e.message); }
+}
+
+/* ---------- background freshness check (cheap: IDs + timestamps only) ---------- */
+let pollTimer=null,lastSig="";
+async function pollChanges(){
+  if(!token||dirty||document.hidden) return;
+  if($("#modalBack")?.classList.contains("open")) return;
+  try{
+    const res=await api("/values:batchGet?"+["Quotations!A2:A","Quotations!H2:H","Projects!A2:A"]
+      .map(r=>"ranges="+encodeURIComponent(r)).join("&"));
+    const sig=JSON.stringify(res.valueRanges.map(v=>v.values||[]));
+    if(lastSig&&sig!==lastSig){
+      await loadAll(); render();
+      toast("↻ Refreshed with your team's latest changes");
+    }
+    lastSig=sig;
+  }catch(e){}
 }
 
 /* ================= helpers: totals ================= */
@@ -590,7 +679,7 @@ function renderHome(v){
   else if(tab==="dashboard") renderDashboardTab(b);
   else renderTemplatesTab(b);
 }
-async function reloadData(){ try{ await loadAll(); render(); toast("Data reloaded from Sheet"); }catch(e){ alert(e.message); } }
+async function reloadData(){ try{ await loadAll(); lastSig=""; render(); toast("Data reloaded from Sheet"); }catch(e){ alert(e.message); } }
 
 function renderProjectList(b){
   const co=DB.companies.find(c=>c.id===ACTIVE_COMPANY);
