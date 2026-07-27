@@ -1038,7 +1038,7 @@ function renderDashboardTab(b){
             <td class="t-right num" style="font-weight:700;color:${x.q-x.o>=0?"var(--accent-dark)":"var(--red)"}">${(x.q&&x.o)?fmtRpShort(x.q-x.o):"—"}</td></tr>`).join("")
         :'<tr><td colspan="6"><div class="empty">No financial documents yet in this company.</div></td></tr>'}</tbody></table></div>
     </div>
-    <p style="font-size:11.5px;color:var(--muted);margin-top:10px">Superseded revisions are excluded — only the latest revision of each document counts. Hover any figure for the exact amount. Cash in = receipts by receipt date · cash out = POs by payment date · receivables = invoiced − received per project · actual margin compares quotation value to committed PO spend.</p>`;
+    <p style="font-size:11.5px;color:var(--muted);margin-top:10px">Superseded revisions and non-primary alternative options are excluded — only the latest revision of each document counts. Hover any figure for the exact amount. Cash in = receipts by receipt date · cash out = POs by payment date · receivables = invoiced − received per project · actual margin compares quotation value to committed PO spend.</p>`;
 }
 
 /* ================= CLIENTS TAB ================= */
@@ -1349,6 +1349,7 @@ function renderProject(v,p){
 }
 function docRowActions(q,kind){
   return `${can(docPerm(q.kind))?`<button class="btn ghost small" title="Create a linked new revision (keeps this version as history)" onclick="event.stopPropagation();openRevision('${q.id}')">⎘ Rev</button>`:""}
+    ${can(docPerm(q.kind))&&["quote","rap"].includes(q.kind||"quote")?`<button class="btn ghost small" title="Offer a parallel alternative (e.g. another brand) — counted once" onclick="event.stopPropagation();openAddOption('${q.id}')">⎇ Option</button>`:""}
     ${kind==="quote"&&can("rap")?`<button class="btn ghost small" title="Create RAP from this quotation" onclick="event.stopPropagation();deriveRAP('${q.id}')">→ RAP</button>`:""}
     ${kind==="rap"&&can("po")?`<button class="btn ghost small" title="Create a purchase order from selected items" onclick="event.stopPropagation();openPOFromRAP('${q.id}')">→ PO</button>`:""}
     ${kind==="invoice"&&can("billing")?`<button class="btn ghost small" title="Create receipt for this invoice" onclick="event.stopPropagation();receiptFromInvoice('${q.id}')">→ Receipt</button>`:""}
@@ -1364,7 +1365,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")} ${q.extra?.termin?`<span class="pill amber">${esc(q.extra.termin)}</span>`:""}${finalPill(q)}${revBadge(q)}</td>
+        <td>${esc(q.title||"Untitled")} ${q.extra?.termin?`<span class="pill amber">${esc(q.extra.termin)}</span>`:""}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         <td style="font-size:12.5px">${esc(q.extra?.refQuote||"—")}</td>
         <td class="t-right num">${fmtRp(quoteSubtotal(q))}</td>
@@ -1377,7 +1378,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}</td>
+        <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         <td style="font-size:12.5px">${esc([...bastRefList(q),q.extra?.spkNo].filter(Boolean).join(" · ")||"—")}</td>
         <td class="t-right" style="white-space:nowrap">${docRowActions(q,kind)}</td>
@@ -1388,7 +1389,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}</td>
+        <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         <td style="font-size:12.5px">${esc(q.extra?.refQuote||"—")}</td>
         <td class="t-right num">${q.sections.reduce((a,s)=>a+s.items.length,0)}</td>
@@ -1400,7 +1401,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}</td>
+        <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         <td style="font-size:12.5px">${esc(q.extra?.refQuote||"—")}</td>
         <td style="font-size:12.5px;color:var(--muted)">${esc(q.extra?.shipTo||"—")}</td>
@@ -1413,7 +1414,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}</td>
+        <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         ${kind==="po"?`<td>${esc(q.extra?.distributor||"—")}</td><td>${q.extra?.paid?`<span class="pill" title="${esc(q.extra?.payMethod||"")} ${esc(q.extra?.payBank||"")}">paid ${q.extra?.paidDate?fmtDate(q.extra.paidDate):""}</span>`:'<span class="pill amber">unpaid</span>'}</td>`:""}
         ${kind!=="receipt"?`
@@ -1430,8 +1431,10 @@ function docTable(list,kind,emptyMsg){
 }
 function renderProjectDocs(b,p){
   const quotes=kindQuotes(p.id,"quote"), raps=kindQuotes(p.id,"rap");
-  const liveQ=liveOnly(quotes), liveR=liveOnly(raps);
-  const gq=liveQ.reduce((a,q)=>a+quoteGrand(q),0), gr=liveR.reduce((a,q)=>a+quoteGrand(q),0);
+  const showQ=notSuperseded(quotes), showR=notSuperseded(raps);          // options stay visible
+  const gq=countable(quotes).reduce((a,q)=>a+quoteGrand(q),0),           // only the primary counts
+        gr=countable(raps).reduce((a,q)=>a+quoteGrand(q),0);
+  const exSet=excludedFromTotals();
   b.innerHTML=`
     ${can("quote")?`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -1491,9 +1494,9 @@ function renderProjectDocs(b,p){
     <span class="eyebrow">Project summary</span>
     <div class="card card-pad" style="margin-top:8px;max-width:560px">
       <div class="totals" style="max-width:none">
-        ${can("quote")?liveQ.map(q=>`<div class="line"><span>${esc(q.quoteNumber||q.title||"Quotation")}${revBadge(q)}</span><span class="num">${fmtRp(quoteGrand(q))}</span></div>`).join(""):""}
-        ${can("quote")&&liveQ.length?`<div class="line" style="font-weight:600;border-top:1px solid var(--line)"><span>Total quotations</span><span class="num">${fmtRp(gq)}</span></div>`:""}
-        ${can("rap")&&liveR.length?`<div class="line" style="color:var(--amber)"><span>Total RAP (budget)</span><span class="num">${fmtRp(gr)}</span></div>`:""}
+        ${can("quote")?showQ.map(q=>{const off=exSet.has(q.id);return `<div class="line" ${off?'style="color:var(--muted)"':""}><span>${esc(q.quoteNumber||q.title||"Quotation")}${optBadge(q)}${off?" <span style='font-size:11px'>not counted</span>":""}</span><span class="num">${fmtRp(quoteGrand(q))}</span></div>`;}).join(""):""}
+        ${can("quote")&&showQ.length?`<div class="line" style="font-weight:600;border-top:1px solid var(--line)"><span>Total quotations</span><span class="num">${fmtRp(gq)}</span></div>`:""}
+        ${can("rap")&&showR.length?`<div class="line" style="color:var(--amber)"><span>Total RAP (budget)</span><span class="num">${fmtRp(gr)}</span></div>`:""}
         ${(can("quote")&&can("rap")&&quotes.length&&raps.length)?`<div class="line grand"><span>Est. margin (quote − RAP)</span><span class="num" style="color:${gq-gr>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(gq-gr)}</span></div>`:""}
       </div>
     </div>`:""}`;
@@ -1811,6 +1814,8 @@ function pickQuoteForSO(pid){
 async function doSOFromQuote(quoteId){
   const src=getQuote(quoteId);
   closeModal();
+  const g=optGroupOf(src);   // the client chose this option → it becomes the counted one
+  if(g) DB.quotations.filter(x=>optGroupOf(x)===g).forEach(x=>{x.extra=x.extra||{}; x.extra.optPrimary=(x.id===src.id);});
   const n=kindQuotes(src.projectId,"so").length+1;
   const q={id:uid(),projectId:src.projectId,quoteNumber:"",title:"SO "+n+" — "+(src.quoteNumber||src.title),
     date:todayISO(),tax:src.tax,kind:"so",discount:JSON.parse(JSON.stringify(src.discount||{type:"percent",value:0})),
@@ -1910,6 +1915,68 @@ async function doDeriveRAP(qid){
   await persist(saveQuotes,"RAP created — "+(parts.join(", ")||"empty"));
   go({view:"quote",quoteId:copy.id});
 }
+function openAddOption(qid){
+  const src=getQuote(qid), fam=optFamily(src);
+  const nextLetter=String.fromCharCode(65+(optGroupOf(src)?fam.length:1));
+  openModal("Add alternative option to “"+esc(src.quoteNumber||src.title)+"”",`
+    <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+      Creates a parallel version the client can choose between (e.g. a different brand).
+      Both stay live and sendable — but only the <strong>primary</strong> option is counted in the
+      dashboard and totals, so your pipeline is not doubled.</p>
+    <div class="field"><label>Label for the new option</label>
+      <input id="op_label" value="Option ${nextLetter}" placeholder="e.g. Option B — JBL"></div>
+    ${optGroupOf(src)?"":`<div class="field"><label>Label for the existing document</label>
+      <input id="op_label0" value="Option A" placeholder="e.g. Option A — Krezt Pro"></div>`}
+    <div class="field"><label>Document number for the new option</label>
+      <input id="op_num" value="${esc(src.quoteNumber||"")}" placeholder="leave blank to fill in later"></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="doAddOption('${qid}')">Create option</button>`);
+}
+async function doAddOption(qid){
+  const src=getQuote(qid);
+  const label=$("#op_label").value.trim()||"Option B";
+  const label0=$("#op_label0")?.value.trim()||optLabel(src)||"Option A";
+  const num=$("#op_num").value.trim();
+  closeModal();
+  src.extra=src.extra||{};
+  if(!optGroupOf(src)){ src.extra.optGroup=src.id; src.extra.optLabel=label0; src.extra.optPrimary=true; }
+  const copy=JSON.parse(JSON.stringify(src));
+  copy.id=uid(); copy.date=todayISO(); copy.quoteNumber=num;
+  copy.title=(src.title||KIND_LABEL[src.kind||"quote"]).replace(/\s+—\s+Option.*$/i,"")+" — "+label;
+  copy.extra={...(copy.extra||{})};
+  delete copy.extra.final; delete copy.extra.finalDate; delete copy.extra.finalBy;
+  delete copy.extra.revRoot; delete copy.extra.rev; delete copy.extra.revOf; delete copy.extra.revNote;
+  copy.extra.optGroup=optGroupOf(src); copy.extra.optLabel=label; copy.extra.optPrimary=false;
+  DB.quotations.push(copy);
+  await persist(saveQuotes,"“"+label+"” created — mark it primary if the client leans that way");
+  go({view:"quote",quoteId:copy.id});
+}
+async function setPrimaryOption(qid){
+  const q=getQuote(qid), g=optGroupOf(q);
+  if(!g) return;
+  DB.quotations.filter(x=>optGroupOf(x)===g).forEach(x=>{x.extra=x.extra||{}; x.extra.optPrimary=(x.id===q.id);});
+  render();
+  await persist(saveQuotes,"“"+(optLabel(q)||"This option")+"” is now the counted option");
+}
+function optPanelHTML(q){
+  const fam=optFamily(q); if(fam.length<2) return "";
+  const ex=excludedFromTotals();
+  return `<div class="card card-pad" style="margin-bottom:22px">
+    <span class="eyebrow">Alternative options — ${fam.length} versions offered together</span>
+    <table class="grid" style="margin-top:8px">
+      <thead><tr><th>Option</th><th>Number</th><th class="t-right" style="width:140px">Value</th><th style="width:180px">Counted in totals</th></tr></thead>
+      <tbody>${fam.map(x=>{const primary=!ex.has(x.id);return `
+        <tr ${x.id===q.id?'style="background:var(--accent-soft)"':'class="rowlink" onclick="go({view:\'quote\',quoteId:\''+x.id+'\'})"'}>
+          <td style="font-weight:600">${esc(optLabel(x)||"Option")}${x.id===q.id?" ←":""}${x.extra?.final?' <span class="pill" style="background:var(--ink);color:#fff">FINAL</span>':""}</td>
+          <td>${esc(x.quoteNumber||"—")}</td>
+          <td class="t-right num">${fmtRp(quoteGrand(x))}</td>
+          <td>${primary?'<span class="pill">★ primary — counted</span>'
+            :`<button class="btn ghost small" onclick="event.stopPropagation();setPrimaryOption('${x.id}')">Make primary</button>`}</td>
+        </tr>`;}).join("")}
+      </tbody></table>
+    <div style="margin-top:9px;font-size:12px;color:var(--muted)">All options stay live and can be sent to the client. Only the primary one is added to the pipeline, project totals and dashboard — the client will buy one of them. Creating a Sales Order from an option makes it primary automatically.</div>
+  </div>`;
+}
 function openRevision(qid){
   const src=getQuote(qid), fam=revFamily(src);
   const next=Math.max(...fam.map(revNo))+1;
@@ -1990,9 +2057,11 @@ function renderQuote(v,q,p){
         <button class="btn" onclick="printQuote('${q.id}')">⤓ PDF</button>
         <button class="btn ${q.extra?.final?"dark":""}" onclick="toggleFinal('${q.id}')">${q.extra?.final?"🔒 Final":"✓ Mark final"}</button>
         <button class="btn" onclick="openRevision('${q.id}')" title="Create the next revision of this document">⎘ New revision</button>
+        ${["quote","rap"].includes(q.kind||"quote")?`<button class="btn" onclick="openAddOption('${q.id}')" title="Offer a parallel alternative to the client">⎇ Add option</button>`:""}
         <button class="btn primary" onclick="persist(saveQuotes)">Save</button>
       </div>
     </div>
+    ${optPanelHTML(q)}
     ${revHistoryHTML(q)}
     ${q.extra?.final?`<div style="background:var(--ink);color:#DCE8E0;border-radius:8px;padding:9px 14px;margin-bottom:16px;font-size:12.5px">
       🔒 <strong>FINAL</strong> — marked ${fmtDate(q.extra.finalDate)} by ${esc(q.extra.finalBy||"")}. Sent / approved externally; editing is locked. Duplicate to create a new revision, or unlock via the Final button.</div>`:""}
@@ -2236,7 +2305,36 @@ function revOpt(x){
   const f=revFamily(x); if(f.length<2) return "";
   return " · Rev "+revNo(x)+(isLatestRev(x)?" (current)":" (superseded)");
 }
-const liveOnly=list=>{const sup=supersededIds(); return list.filter(q=>!sup.has(q.id));};
+/* ---------- option groups ----------
+   Parallel alternatives offered at the same time (Brand A vs Brand B).
+   All members stay live and sendable; only the PRIMARY one counts in money
+   totals, because the client will buy exactly one of them. */
+const optGroupOf=q=>q?.extra?.optGroup||"";
+const optFamily=q=>{const g=optGroupOf(q);
+  return g?DB.quotations.filter(x=>optGroupOf(x)===g).sort((a,b)=>String(a.extra?.optLabel||"").localeCompare(String(b.extra?.optLabel||""))):[q];};
+const optLabel=q=>q?.extra?.optLabel||"";
+/* ids that must NOT be added up: superseded revisions + non-primary options */
+function excludedFromTotals(){
+  const sup=supersededIds(), out=new Set(sup), groups={};
+  DB.quotations.forEach(q=>{const g=optGroupOf(q); if(!g||sup.has(q.id))return; (groups[g]=groups[g]||[]).push(q);});
+  Object.values(groups).forEach(list=>{
+    if(list.length<2) return;
+    const primary=list.find(x=>x.extra?.optPrimary)||list[0];
+    list.forEach(x=>{ if(x.id!==primary.id) out.add(x.id); });
+  });
+  return out;
+}
+const isPrimaryOption=q=>!excludedFromTotals().has(q.id)||!optGroupOf(q);
+function optBadge(q){
+  const fam=optFamily(q); if(fam.length<2) return "";
+  const ex=excludedFromTotals();
+  const primary=!ex.has(q.id);
+  return ` <span class="pill" style="background:${primary?"var(--accent-soft)":"#EDF1EC"};color:${primary?"var(--accent-dark)":"#8A948C"}"
+    title="${primary?"Counted in pipeline & totals":"Alternative option — not counted in totals"}">${esc(optLabel(q)||"Option")}${primary?" ★":""}</span>`;
+}
+const countable=list=>{const ex=excludedFromTotals(); return list.filter(q=>!ex.has(q.id));};      // for money
+const notSuperseded=list=>{const sup=supersededIds(); return list.filter(q=>!sup.has(q.id));};     // for display
+const liveOnly=countable;   // backwards-compatible alias
 function revBadge(q){
   const f=revFamily(q); if(f.length<2) return "";
   return isLatestRev(q)
@@ -2921,16 +3019,19 @@ function printSummary(pid,scope){
   scope=scope||"all";
   if(dirty) persist(saveProjects);
   const p=getProject(pid);
-  const quotes=scope==="rap"?[]:liveOnly(kindQuotes(pid,"quote"));
-  const raps=scope==="quote"?[]:liveOnly(kindQuotes(pid,"rap"));
+  const quotes=scope==="rap"?[]:notSuperseded(kindQuotes(pid,"quote"));
+  const raps=scope==="quote"?[]:notSuperseded(kindQuotes(pid,"rap"));
+  const exS=excludedFromTotals();
+  const hasOptions=[...quotes,...raps].some(q=>optFamily(q).length>1);
   const tbl=(list,label)=>{
     if(!list.length) return "";
-    const g=list.reduce((a,q)=>a+quoteGrand(q),0);
+    const g=list.filter(q=>!exS.has(q.id)).reduce((a,q)=>a+quoteGrand(q),0);
     return `<h4 style="font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;margin:14px 0 5px">${label}</h4>
     <table class="p-table">
       <thead><tr><th style="width:24px">No</th><th style="width:120px">Number</th><th>Title / Scope</th><th style="width:84px">Date</th><th style="width:96px;text-align:right">Subtotal</th><th style="width:84px;text-align:right">Discount</th><th style="width:84px;text-align:right">PPN 11%</th><th style="width:104px;text-align:right">Grand Total</th></tr></thead>
       <tbody>${list.map((q,i)=>`<tr>
-        <td class="num-p">${i+1}</td><td class="num-p">${esc(q.quoteNumber||"—")}</td><td>${esc(q.title||"—")}</td>
+        <td class="num-p">${i+1}</td><td class="num-p">${esc(q.quoteNumber||"—")}</td>
+        <td>${esc(q.title||"—")}${optFamily(q).length>1?` <strong>[${esc(optLabel(q)||"option")}]</strong>${exS.has(q.id)?" *":""}`:""}</td>
         <td class="num-p">${fmtDate(q.date)}</td>
         <td class="num-p" style="text-align:right">${fmtRp(quoteSubtotal(q))}</td>
         <td class="num-p" style="text-align:right">${quoteDiscount(q)?"− "+fmtRp(quoteDiscount(q)):"—"}</td>
@@ -2939,7 +3040,8 @@ function printSummary(pid,scope){
         <tr class="subtotal"><td colspan="7" style="text-align:right">TOTAL — ${label.toUpperCase()}</td><td class="num-p" style="text-align:right">${fmtRp(g)}</td></tr>
       </tbody></table>`;
   };
-  const gq=quotes.reduce((a,q)=>a+quoteGrand(q),0), gr=raps.reduce((a,q)=>a+quoteGrand(q),0);
+  const gq=quotes.filter(q=>!exS.has(q.id)).reduce((a,q)=>a+quoteGrand(q),0),
+        gr=raps.filter(q=>!exS.has(q.id)).reduce((a,q)=>a+quoteGrand(q),0);
   $("#printArea").innerHTML=`<div class="p-doc">
     ${docHeaderHTML(scope==="quote"?"QUOTATION SUMMARY":scope==="rap"?"RAP SUMMARY (INTERNAL)":"PROJECT SUMMARY",p,[
       ["Project",p.name],["Location",p.location||"—"],["Client",p.client||"—"],
@@ -2947,6 +3049,7 @@ function printSummary(pid,scope){
     ])}
     ${tbl(quotes,"Quotations")}
     ${tbl(raps,"RAP / Budget Estimation")}
+    ${hasOptions?`<p style="font-size:9.5px;color:#555;margin-top:2px">[Option] = alternative versions offered for the same scope; only one is intended to be ordered. Items marked * are alternatives and are excluded from the total.</p>`:""}
     ${(scope==="all"&&quotes.length&&raps.length)?`<table class="p-tot"><tbody>
       <tr><td>Total quotations</td><td class="num-p" style="text-align:right">${fmtRp(gq)}</td></tr>
       <tr><td>Total RAP (budget)</td><td class="num-p" style="text-align:right">${fmtRp(gr)}</td></tr>
@@ -2999,15 +3102,20 @@ function exportSummaryXlsx(pid,scope){
   scope=scope||"all";
   if(needXLSX()) return;
   const p=getProject(pid);
-  const quotes=scope==="rap"?[]:liveOnly(kindQuotes(pid,"quote"));
-  const raps=scope==="quote"?[]:liveOnly(kindQuotes(pid,"rap"));
+  const quotes=scope==="rap"?[]:notSuperseded(kindQuotes(pid,"quote"));
+  const raps=scope==="quote"?[]:notSuperseded(kindQuotes(pid,"rap"));
+  const exS=excludedFromTotals();
   const wb=XLSX.utils.book_new();
   const sumAOA=[[projCompany(p).name],[(scope==="quote"?"QUOTATION SUMMARY — ":scope==="rap"?"RAP SUMMARY (INTERNAL) — ":"PROJECT SUMMARY — ")+p.name],["Location",p.location||""],["Client",p.client||""],["Exported",todayISO()],[],
     ["Type","No","Number","Title","Date","Subtotal","Discount","PPN 11%","Grand Total"]];
-  const push=(list,label)=>list.forEach((q,i)=>sumAOA.push([label,i+1,q.quoteNumber||"",q.title||"",q.date||"",quoteSubtotal(q),-quoteDiscount(q)||0,quoteTax(q),quoteGrand(q)]));
+  const push=(list,label)=>list.forEach((q,i)=>sumAOA.push([label+(optFamily(q).length>1?(exS.has(q.id)?" (alt option)":" (primary option)"):""),
+    i+1,q.quoteNumber||"",(q.title||"")+(optFamily(q).length>1?" ["+(optLabel(q)||"option")+"]":""),q.date||"",
+    quoteSubtotal(q),-quoteDiscount(q)||0,quoteTax(q),quoteGrand(q)]));
   push(quotes,"Quotation"); push(raps,"RAP");
-  const gq=quotes.reduce((a,q)=>a+quoteGrand(q),0), gr=raps.reduce((a,q)=>a+quoteGrand(q),0);
+  const gq=quotes.filter(q=>!exS.has(q.id)).reduce((a,q)=>a+quoteGrand(q),0),
+        gr=raps.filter(q=>!exS.has(q.id)).reduce((a,q)=>a+quoteGrand(q),0);
   sumAOA.push([]);
+  sumAOA.push(["Totals exclude alternative options and superseded revisions."]);
   if(quotes.length) sumAOA.push(["","","","","","","","Total quotations",gq]);
   if(raps.length)   sumAOA.push(["","","","","","","","Total RAP",gr]);
   if(scope==="all"&&quotes.length&&raps.length) sumAOA.push(["","","","","","","","EST. MARGIN",gq-gr]);
