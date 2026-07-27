@@ -1815,7 +1815,10 @@ async function doSOFromQuote(quoteId){
   const src=getQuote(quoteId);
   closeModal();
   const g=optGroupOf(src);   // the client chose this option → it becomes the counted one
-  if(g) DB.quotations.filter(x=>optGroupOf(x)===g).forEach(x=>{x.extra=x.extra||{}; x.extra.optPrimary=(x.id===src.id);});
+  if(g){
+    const win=latestRev(src)||src;
+    DB.quotations.filter(x=>optGroupOf(x)===g).forEach(x=>{x.extra=x.extra||{}; x.extra.optPrimary=(x.id===win.id);});
+  }
   const n=kindQuotes(src.projectId,"so").length+1;
   const q={id:uid(),projectId:src.projectId,quoteNumber:"",title:"SO "+n+" — "+(src.quoteNumber||src.title),
     date:todayISO(),tax:src.tax,kind:"so",discount:JSON.parse(JSON.stringify(src.discount||{type:"percent",value:0})),
@@ -1952,9 +1955,13 @@ async function doAddOption(qid){
   go({view:"quote",quoteId:copy.id});
 }
 async function setPrimaryOption(qid){
-  const q=getQuote(qid), g=optGroupOf(q);
+  const q0=getQuote(qid), g=optGroupOf(q0);
   if(!g) return;
-  DB.quotations.filter(x=>optGroupOf(x)===g).forEach(x=>{x.extra=x.extra||{}; x.extra.optPrimary=(x.id===q.id);});
+  const q=latestRev(q0)||q0;                 // always flag the option's current revision
+  DB.quotations.filter(x=>optGroupOf(x)===g).forEach(x=>{
+    x.extra=x.extra||{};
+    x.extra.optPrimary=(revRootOf(x)===revRootOf(q)&&x.id===q.id);
+  });
   render();
   await persist(saveQuotes,"“"+(optLabel(q)||"This option")+"” is now the counted option");
 }
@@ -1962,12 +1969,14 @@ function optPanelHTML(q){
   const fam=optFamily(q); if(fam.length<2) return "";
   const ex=excludedFromTotals();
   return `<div class="card card-pad" style="margin-bottom:22px">
-    <span class="eyebrow">Alternative options — ${fam.length} versions offered together</span>
+    <span class="eyebrow">Alternative options — ${fam.length} option${fam.length===1?"":"s"} offered together</span>
+    ${optFamily(q).some(x=>revRootOf(x)===revRootOf(q))?"":`<div style="font-size:12px;color:var(--amber);margin-top:6px">⚠ You are viewing a superseded revision of this option.</div>`}
     <table class="grid" style="margin-top:8px">
-      <thead><tr><th>Option</th><th>Number</th><th class="t-right" style="width:140px">Value</th><th style="width:180px">Counted in totals</th></tr></thead>
-      <tbody>${fam.map(x=>{const primary=!ex.has(x.id);return `
-        <tr ${x.id===q.id?'style="background:var(--accent-soft)"':'class="rowlink" onclick="go({view:\'quote\',quoteId:\''+x.id+'\'})"'}>
-          <td style="font-weight:600">${esc(optLabel(x)||"Option")}${x.id===q.id?" ←":""}${x.extra?.final?' <span class="pill" style="background:var(--ink);color:#fff">FINAL</span>':""}</td>
+      <thead><tr><th>Option</th><th>Current version</th><th>Number</th><th class="t-right" style="width:140px">Value</th><th style="width:180px">Counted in totals</th></tr></thead>
+      <tbody>${fam.map(x=>{const primary=!ex.has(x.id), here=revRootOf(x)===revRootOf(q), revs=revFamily(x);return `
+        <tr ${here?'style="background:var(--accent-soft)"':'class="rowlink" onclick="go({view:\'quote\',quoteId:\''+x.id+'\'})"'}>
+          <td style="font-weight:600">${esc(optLabel(x)||"Option")}${here?" ←":""}</td>
+          <td style="font-size:12.5px">${revs.length>1?`Rev ${revNo(x)} of ${revs.length}`:"—"}${x.extra?.final?' <span class="pill" style="background:var(--ink);color:#fff">FINAL</span>':""}</td>
           <td>${esc(x.quoteNumber||"—")}</td>
           <td class="t-right num">${fmtRp(quoteGrand(x))}</td>
           <td>${primary?'<span class="pill">★ primary — counted</span>'
@@ -1999,7 +2008,7 @@ async function doRevision(qid){
   closeModal();
   const copy=JSON.parse(JSON.stringify(src));
   copy.id=uid(); copy.date=todayISO(); copy.quoteNumber=num;
-  copy.title=(src.title||KIND_LABEL[src.kind||"quote"]).replace(/\s*\(Rev\s*\d+\)\s*$/i,"")+" (Rev "+next+")";
+  copy.title=(src.title||KIND_LABEL[src.kind||"quote"]).replace(/\s*\(Rev\s*\d+\)\s*$/ig,"").trim()+" (Rev "+next+")";
   copy.extra={...(copy.extra||{})};
   delete copy.extra.final; delete copy.extra.finalDate; delete copy.extra.finalBy;
   copy.extra.revRoot=revRootOf(src); copy.extra.rev=next; copy.extra.revOf=src.id;
@@ -2311,7 +2320,10 @@ function revOpt(x){
    totals, because the client will buy exactly one of them. */
 const optGroupOf=q=>q?.extra?.optGroup||"";
 const optFamily=q=>{const g=optGroupOf(q);
-  return g?DB.quotations.filter(x=>optGroupOf(x)===g).sort((a,b)=>String(a.extra?.optLabel||"").localeCompare(String(b.extra?.optLabel||""))):[q];};
+  if(!g) return [q];
+  const sup=supersededIds();                       // collapse each option to its latest revision
+  return DB.quotations.filter(x=>optGroupOf(x)===g&&!sup.has(x.id))
+    .sort((a,b)=>String(a.extra?.optLabel||"").localeCompare(String(b.extra?.optLabel||"")));};
 const optLabel=q=>q?.extra?.optLabel||"";
 /* ids that must NOT be added up: superseded revisions + non-primary options */
 function excludedFromTotals(){
