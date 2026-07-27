@@ -1562,7 +1562,7 @@ function pickQuoteForSJ(pid){
   if(quotes.length===1) return openSJFromQuote(quotes[0].id);
   openModal("Create surat jalan — choose source quotation",`
     <div class="field"><label>Quotation to deliver from</label>
-      <select id="sj_src">${quotes.map(x=>`<option value="${x.id}">${esc(x.quoteNumber||x.title)}</option>`).join("")}</select></div>`,
+      <select id="sj_src">${quotes.map(x=>`<option value="${x.id}">${esc(x.quoteNumber||x.title)}${revOpt(x)}</option>`).join("")}</select></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="openSJFromQuote($('#sj_src').value)">Next — pick items</button>`);
 }
@@ -1650,7 +1650,7 @@ function pickQuoteForDoc(pid,kind){
   if(quotes.length===1) return kind==="mos"?openMOSFromQuote(quotes[0].id):doBAPFromQuote(quotes[0].id);
   openModal("Choose source quotation",`
     <div class="field"><label>Quotation</label>
-      <select id="doc_src">${quotes.map(x=>`<option value="${x.id}">${esc(x.quoteNumber||x.title)}</option>`).join("")}</select></div>`,
+      <select id="doc_src">${quotes.map(x=>`<option value="${x.id}">${esc(x.quoteNumber||x.title)}${revOpt(x)}</option>`).join("")}</select></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="${kind==="mos"?"openMOSFromQuote($('#doc_src').value)":"doBAPFromQuote($('#doc_src').value)"}">Next</button>`);
 }
@@ -1743,7 +1743,7 @@ function pickRAPForPO(pid){
   if(raps.length===1) return openPOFromRAP(raps[0].id);
   openModal("Create PO — choose source RAP",`
     <div class="field"><label>RAP to order from</label>
-      <select id="po_src">${raps.map(r=>`<option value="${r.id}">${esc(r.quoteNumber||r.title)}</option>`).join("")}</select></div>`,
+      <select id="po_src">${raps.map(r=>`<option value="${r.id}">${esc(r.quoteNumber||r.title)}${revOpt(r)}</option>`).join("")}</select></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="openPOFromRAP($('#po_src').value)">Next — pick items</button>`);
 }
@@ -1803,7 +1803,8 @@ function pickQuoteForSO(pid){
   if(quotes.length===1) return doSOFromQuote(quotes[0].id);
   openModal("Create sales order — choose approved quotation",`
     <div class="field"><label>Quotation</label>
-      <select id="so_src">${quotes.map(x=>`<option value="${x.id}">${esc(x.quoteNumber||x.title)} — ${fmtRp(quoteGrand(x))}${x.extra?.final?" · FINAL":""}</option>`).join("")}</select></div>`,
+      <select id="so_src">${quotes.map(x=>`<option value="${x.id}" ${isLatestRev(x)?"":""}>${esc(x.quoteNumber||x.title)} — ${fmtRp(quoteGrand(x))}${x.extra?.final?" · FINAL":""}${revOpt(x)}</option>`).join("")}</select>
+      <span style="font-size:11.5px;color:var(--muted)">Older revisions stay selectable — pick the version the client actually approved.</span></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="doSOFromQuote($('#so_src').value)">Create SO</button>`);
 }
@@ -2229,6 +2230,12 @@ function supersededIds(){
   DB.quotations.forEach(q=>{ if(best[revRootOf(q)].id!==q.id) out.add(q.id); });
   return out;
 }
+/* Superseded revisions stay selectable everywhere — a client may revert to an
+   earlier version — but they are labelled so the choice is deliberate. */
+function revOpt(x){
+  const f=revFamily(x); if(f.length<2) return "";
+  return " · Rev "+revNo(x)+(isLatestRev(x)?" (current)":" (superseded)");
+}
 const liveOnly=list=>{const sup=supersededIds(); return list.filter(q=>!sup.has(q.id));};
 function revBadge(q){
   const f=revFamily(q); if(f.length<2) return "";
@@ -2335,7 +2342,7 @@ function openInvoiceImport(invId){
   if(!srcs.length) return alert("No sales orders or quotations in this project to import from.");
   openModal("Import into invoice",`
     <div class="field"><label>Source (sales order or quotation)</label>
-      <select id="inv_src">${srcs.map(x=>`<option value="${x.id}" ${inv.extra?.refSOId===x.id?"selected":""}>${x.kind==="so"?"SO · ":""}${esc(x.quoteNumber||x.title)} — ${fmtRp(quoteGrand(x))}</option>`).join("")}</select></div>
+      <select id="inv_src">${srcs.map(x=>`<option value="${x.id}" ${inv.extra?.refSOId===x.id?"selected":""}>${x.kind==="so"?"SO · ":""}${esc(x.quoteNumber||x.title)} — ${fmtRp(quoteGrand(x))}${revOpt(x)}</option>`).join("")}</select></div>
     <div class="field"><label>Billing mode</label>
       <select id="inv_mode">
         <option value="pct" selected>Percentage line (e.g. down payment / progress payment)</option>
