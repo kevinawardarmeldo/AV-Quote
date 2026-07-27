@@ -428,8 +428,17 @@ async function loadAll(){
 const SNAP={};                                   // tab -> rows as last seen remotely
 let MERGE_REPORT={adopted:0,conflicts:0,added:0,names:[]};
 const rowId=r=>String((r&&r[0])||"").trim();
-const normRow=r=>{const a=(r||[]).map(x=>x===undefined||x===null?"":String(x));
+/* Columns that are rewritten on every save and therefore say nothing about
+   whether a human actually edited the record. Quotations col H = "Updated". */
+const VOLATILE_COLS={Quotations:[7]};
+const normRow=(r,tab)=>{const skip=VOLATILE_COLS[tab]||[];
+  const a=(r||[]).map((x,i)=>skip.includes(i)?"":(x===undefined||x===null?"":String(x)));
   while(a.length&&a[a.length-1]==="")a.pop(); return JSON.stringify(a);};
+/* Human-readable label for the conflict report (Quotations: number, then title) */
+function rowLabel(tab,r){
+  if(tab==="Quotations") return String(r[2]||r[3]||rowId(r));
+  return String(r[1]||rowId(r));
+}
 function snapTab(tab,rows){ SNAP[tab]=rows.map(r=>r.slice()); }
 async function fetchTabRows(tab){
   const res=await api(`/values/${encodeURIComponent(tab)}!A2:Z`);
@@ -449,11 +458,15 @@ async function saveTab(tab,rows){
     const out=[];
     for(const r of rows){
       const id=rowId(r), rem=remoteMap.get(id), sn=snapMap.get(id);
-      const theyChanged = rem&&sn&&normRow(rem)!==normRow(sn);
-      const iChanged    = sn?normRow(r)!==normRow(sn):true;
+      const theyChanged = rem&&sn&&normRow(rem,tab)!==normRow(sn,tab);
+      const iChanged    = sn?normRow(r,tab)!==normRow(sn,tab):true;
       if(theyChanged&&!iChanged){ out.push(rem); MERGE_REPORT.adopted++; }        // keep their edit
       else{
-        if(theyChanged&&iChanged){ MERGE_REPORT.conflicts++; MERGE_REPORT.names.push(tab+" · "+(r[1]||id)); }
+        if(theyChanged&&iChanged){
+          MERGE_REPORT.conflicts++;
+          const nm=tab+" · "+rowLabel(tab,r);
+          if(!MERGE_REPORT.names.includes(nm)) MERGE_REPORT.names.push(nm);
+        }
         out.push(r);                                                              // mine wins
       }
     }
@@ -493,9 +506,10 @@ async function persist(fn,msg){
     const r=MERGE_REPORT;
     if(r.conflicts){
       await loadAll(); lastSig=""; render();
-      alert("⚠ Saved, but "+r.conflicts+" record(s) were edited by someone else at the same time:\n\n"+
-            r.names.slice(0,6).join("\n")+
-            "\n\nYour version was kept and theirs replaced. The screen has been refreshed — please check those documents with your colleague.");
+      alert("⚠ Saved, but "+r.conflicts+" record(s) had been changed elsewhere since this page was loaded:\n\n"+
+            r.names.slice(0,8).join("\n")+(r.names.length>8?"\n…and "+(r.names.length-8)+" more":"")+
+            "\n\nYour version was kept. The screen has been refreshed.\n\n"+
+            "If you have this app open in another tab or device, that is the likely cause — close the extra tab and reload to avoid overwriting your own newer work.");
     }else if(r.adopted||r.added){
       await loadAll(); lastSig=""; render();
       toast((msg||"Saved")+" · merged "+(r.adopted+r.added)+" change(s) from your team");
