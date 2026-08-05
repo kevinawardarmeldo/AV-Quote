@@ -1115,7 +1115,7 @@ function renderDashboardTab(b){
     const br=recs.filter(q=>q.projectId===p.id).reduce((x,q)=>x+(Number(q.extra?.amount)||0),0);
     return a+Math.max(0,bi-br);},0);
   const poTotal=pos.reduce((a,q)=>a+quoteGrand(q),0);
-  const payable=pos.filter(q=>!q.extra?.paid).reduce((a,q)=>a+quoteGrand(q),0);
+  const payable=countable(pos).reduce((a,q)=>a+poOutstanding(q),0);   // only what is still owed
   const kpi=(label,val,color,sub)=>`<div class="card card-pad" style="flex:1;min-width:160px">
     <div class="eyebrow" style="color:${color||"var(--accent)"}">${label}</div>
     <div class="num" style="font-size:21px;font-weight:800;margin-top:4px" title="${fmtRp(val)}">${fmtRpShort(val)}</div>
@@ -1126,7 +1126,8 @@ function renderDashboardTab(b){
   // monthly cash flow
   const inM=Array(12).fill(0), outM=Array(12).fill(0);
   recs.forEach(r=>{ if(r.date&&r.date.startsWith(dashYear)) inM[Number(r.date.slice(5,7))-1]+=(Number(r.extra?.amount)||0); });
-  pos.forEach(o=>{ const d=o.extra?.paidDate; if(o.extra?.paid&&d&&String(d).startsWith(dashYear)) outM[Number(String(d).slice(5,7))-1]+=quoteGrand(o); });
+  pos.forEach(o=>poPayments(o).forEach(p=>{ const d=p.date;
+    if(d&&String(d).startsWith(dashYear)) outM[Number(String(d).slice(5,7))-1]+=(Number(p.amount)||0); }));
   const maxV=Math.max(1,...inM,...outM);
   const months=["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
   const bars=months.map((m,i)=>`
@@ -1145,7 +1146,7 @@ function renderDashboardTab(b){
     return {p,bi,br,out:bi-br};
   }).filter(x=>x.out>0).sort((a,b)=>b.out-a.out);
   // payables (unpaid POs)
-  const payRows=pos.filter(q=>!q.extra?.paid).sort((a,b)=>quoteGrand(b)-quoteGrand(a));
+  const payRows=pos.filter(q=>poOutstanding(q)>0).sort((a,b)=>poOutstanding(b)-poOutstanding(a));
   // profitability per project
   const profRows=projs.map(p=>{
     const g=k=>docs(k).filter(q=>q.projectId===p.id).reduce((x,q)=>x+quoteGrand(q),0);
@@ -1165,7 +1166,7 @@ function renderDashboardTab(b){
       ${kpi("Received",received,"var(--accent-dark)",recs.length+" receipt(s)")}
       ${kpi("Receivables outstanding",receivable,"var(--red)","invoiced − received")}
       ${kpi("Purchasing (PO)",poTotal,"var(--amber)",pos.length+" PO(s)")}
-      ${kpi("Payables (unpaid PO)",payable,"var(--red)",pos.filter(q=>!q.extra?.paid).length+" unpaid")}
+      ${kpi("Payables (outstanding)",payable,"var(--red)",pos.filter(q=>poOutstanding(q)>0).length+" PO(s) with balance")}
     </div>
 
     <div class="card card-pad" style="margin-bottom:20px">
@@ -1191,8 +1192,8 @@ function renderDashboardTab(b){
           <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
             <td style="font-weight:600">${esc(q.quoteNumber||q.title)}<br><span style="font-size:11px;color:var(--muted)">${esc(getProject(q.projectId)?.name||"")} · ${fmtDate(q.date)}</span></td>
             <td style="font-size:12.5px">${esc(q.extra?.distributor||"—")}</td>
-            <td class="t-right num" style="font-weight:700">${fmtRp(quoteGrand(q))}</td></tr>`).join("")
-        :'<tr><td colspan="3"><div class="empty">No unpaid purchase orders 🎉</div></td></tr>'}</tbody></table></div>
+            <td class="t-right num" style="font-weight:700">${fmtRp(poOutstanding(q))}${poPaidTotal(q)?`<br><span style="font-size:10.5px;color:var(--muted);font-weight:400">of ${fmtRp(quoteGrand(q))}</span>`:""}</td></tr>`).join("")
+        :'<tr><td colspan="3"><div class="empty">No outstanding purchase orders 🎉</div></td></tr>'}</tbody></table></div>
     </div>
 
     <div class="card">
@@ -1587,7 +1588,9 @@ function docTable(list,kind,emptyMsg){
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
         <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
-        ${kind==="po"?`<td>${esc(q.extra?.distributor||"—")}</td><td>${q.extra?.paid?`<span class="pill" title="${esc(q.extra?.payMethod||"")} ${esc(q.extra?.payBank||"")}">paid ${q.extra?.paidDate?fmtDate(q.extra.paidDate):""}</span>`:'<span class="pill amber">unpaid</span>'}</td>`:""}
+        ${kind==="po"?`<td>${esc(q.extra?.distributor||"—")}</td><td>${poFullyPaid(q)?`<span class="pill" title="${poPayments(q).length} payment(s)">paid ${fmtDate(poPayments(q).slice(-1)[0]?.date)}</span>`
+        :poPaidTotal(q)>0?`<span class="pill amber" title="${fmtRp(poPaidTotal(q))} of ${fmtRp(quoteGrand(q))}">partial · ${fmtRp(poOutstanding(q))} left</span>`
+        :'<span class="pill amber">unpaid</span>'}</td>`:""}
         ${kind!=="receipt"?`
           <td>${q.tax?'<span class="pill">included</span>':'<span class="pill amber">excluded</span>'}</td>
           <td class="t-right num">${fmtRp(quoteSubtotal(q))}</td>
@@ -1713,7 +1716,7 @@ function renderProjectPO(b,p){
       </div>
     </div>
     ${docTable(pos,"po","Create a PO from RAP items (recommended) — pick the lines to order and the distributor — or start blank.")}
-    ${pos.length?(()=>{const paid=liveOnly(pos).filter(x=>x.extra?.paid).reduce((a,x)=>a+quoteGrand(x),0);
+    ${pos.length?(()=>{const paid=liveOnly(pos).reduce((a,x)=>a+poPaidTotal(x),0);
       return `<div class="card card-pad" style="max-width:460px"><div class="totals" style="max-width:none">
       <div class="line"><span>Total purchasing</span><span class="num">${fmtRp(total)}</span></div>
       <div class="line"><span>Paid</span><span class="num" style="color:var(--accent-dark)">${fmtRp(paid)}</span></div>
@@ -2286,35 +2289,43 @@ function renderQuote(v,q,p){
           </select></div>
         <div class="field"><label>Ship to / delivery address</label><input value="${esc(q.extra?.shipTo||"")}" placeholder="e.g. project site or warehouse" onchange="exSet('${q.id}','shipTo',this.value)"></div>
       </div>
-      <div style="border:1px solid ${q.extra?.paid?"var(--accent)":"var(--line)"};border-radius:8px;padding:12px 14px;margin-bottom:12px;background:${q.extra?.paid?"var(--accent-soft)":"#FBFCFB"}">
-        <label style="display:flex;align-items:center;gap:10px;font-weight:600;cursor:pointer">
-          <input type="checkbox" ${q.extra?.paid?"checked":""} onchange="poSetPaid('${q.id}',this.checked)">
-          This PO has been paid ${q.extra?.paid?`<span class="pill">LUNAS</span>`:""}
-        </label>
-        ${q.extra?.paid?`
-        <div class="field-row c2" style="margin-top:12px">
-          <div class="field"><label>Payment date</label><input type="date" value="${esc(q.extra?.paidDate||"")}" onchange="exSet('${q.id}','paidDate',this.value)"></div>
-          <div class="field"><label>Payment method</label>
-            <select onchange="exSet('${q.id}','payMethod',this.value)">
-              ${["Transfer","Cash","Cheque / Giro"].map(m=>`<option ${(q.extra?.payMethod||"Transfer")===m?"selected":""}>${m}</option>`).join("")}
-            </select></div>
+      ${(()=>{const pays=poPayments(q), total=quoteGrand(q), paid=poPaidTotal(q), out=poOutstanding(q), full=poFullyPaid(q);
+        const accs=getDistributor(q.extra?.distributor)?.bankAccounts||[];
+        return `<div style="border:1px solid ${full?"var(--accent)":pays.length?"var(--amber)":"var(--line)"};border-radius:8px;padding:12px 14px;margin-bottom:12px;background:${full?"var(--accent-soft)":pays.length?"var(--amber-soft)":"#FBFCFB"}">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <span class="eyebrow" style="color:${full?"var(--accent-dark)":"var(--amber)"}">Payments to distributor ${full?'<span class="pill">LUNAS — fully paid</span>':pays.length?`<span class="pill amber">${pays.length} payment(s) · ${fmtRp(out)} outstanding</span>`:'<span class="pill amber">unpaid</span>'}</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${!pays.length?`<button class="btn small" onclick="poAddPayment('${q.id}',50)">+ DP 50%</button>
+              <button class="btn small" onclick="poAddPayment('${q.id}',30)">+ DP 30%</button>`:""}
+            ${out>0?`<button class="btn small primary" onclick="poAddPayment('${q.id}')">+ Payment${pays.length?" — pelunasan "+fmtRp(out):""}</button>`:""}
+          </div>
         </div>
-        <div class="field"><label>Paid to — saved accounts of ${esc(q.extra?.distributor||"this distributor")}</label>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <select id="poAccSel" style="flex:1;min-width:200px;border:1px solid var(--line);border-radius:8px;padding:8px">
-              <option value="">— pick a saved account —</option>
-              ${(getDistributor(q.extra?.distributor)?.bankAccounts||[]).map((a,i)=>`<option value="${i}">${esc(a.bank)} · ${esc(a.no)} · a.n. ${esc(a.name)}</option>`).join("")}
-            </select>
-            <button class="btn small" onclick="applySavedAccount('${q.id}')">Use</button>
-          </div></div>
-        <div class="field-row c3">
-          <div class="field" style="margin-bottom:0"><label>Bank</label><input value="${esc(q.extra?.payBank||"")}" placeholder="e.g. BCA" onchange="exSet('${q.id}','payBank',this.value)"></div>
-          <div class="field" style="margin-bottom:0"><label>Account number</label><input value="${esc(q.extra?.payNo||"")}" onchange="exSet('${q.id}','payNo',this.value)"></div>
-          <div class="field" style="margin-bottom:0"><label>Account name (a.n.)</label><input value="${esc(q.extra?.payName||"")}" onchange="exSet('${q.id}','payName',this.value)"></div>
-        </div>
-        <div style="margin-top:10px"><button class="btn small" onclick="saveAccountToDistributor('${q.id}')" ${q.extra?.distributor?"":"disabled title='Choose the distributor first'"}>💾 Save this account to ${esc(q.extra?.distributor||"distributor")} for reuse</button></div>
-        `:""}
-      </div>`:""}
+        ${pays.length?`<div style="overflow-x:auto"><table class="grid" style="min-width:720px;background:#fff;border-radius:6px">
+          <thead><tr><th style="width:130px">Label</th><th style="width:130px">Date</th><th style="width:130px" class="t-right">Amount</th><th style="width:120px">Method</th><th>Paid to account</th><th style="width:34px"></th></tr></thead>
+          <tbody>${pays.map(p=>`<tr>
+            <td><input class="inline-input" value="${esc(p.label||"")}" placeholder="DP 50%" onchange="poSetPay('${q.id}','${p.id}','label',this.value)"></td>
+            <td><input class="inline-input" type="date" value="${esc(p.date||"")}" onchange="poSetPay('${q.id}','${p.id}','date',this.value)"></td>
+            <td><input class="inline-input num" type="number" min="0" value="${Number(p.amount)||0}" onchange="poSetPay('${q.id}','${p.id}','amount',this.value)"></td>
+            <td><select style="border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:12px" onchange="poSetPay('${q.id}','${p.id}','method',this.value)">
+              ${["Transfer","Cash","Cheque / Giro"].map(m=>`<option ${(p.method||"Transfer")===m?"selected":""}>${m}</option>`).join("")}</select></td>
+            <td>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">
+                <input class="inline-input" style="width:80px" value="${esc(p.bank||"")}" placeholder="bank" onchange="poSetPay('${q.id}','${p.id}','bank',this.value)">
+                <input class="inline-input" style="width:120px" value="${esc(p.no||"")}" placeholder="account no." onchange="poSetPay('${q.id}','${p.id}','no',this.value)">
+                <input class="inline-input" style="width:120px" value="${esc(p.name||"")}" placeholder="a.n." onchange="poSetPay('${q.id}','${p.id}','name',this.value)">
+                ${accs.length?`<select id="poAcc_${p.id}" onchange="poApplyAccount('${q.id}','${p.id}')" style="border:1px solid var(--line);border-radius:6px;padding:3px 5px;font-size:11.5px">
+                  <option value="">saved…</option>${accs.map((a,i)=>`<option value="${i}">${esc(a.bank)} ${esc(a.no)}</option>`).join("")}</select>`:""}
+                <button class="btn ghost small" title="Save this account to the distributor for reuse" onclick="poSaveAccount('${q.id}','${p.id}')">💾</button>
+              </div></td>
+            <td class="rowtools"><button class="del" onclick="poDelPayment('${q.id}','${p.id}')" title="Remove">✕</button></td>
+          </tr>`).join("")}</tbody></table></div>
+          <div style="display:flex;justify-content:flex-end;gap:22px;margin-top:8px;font-size:13px">
+            <span>PO value <strong class="num">${fmtRp(total)}</strong></span>
+            <span>Paid <strong class="num" style="color:var(--accent-dark)">${fmtRp(paid)}</strong></span>
+            <span>Outstanding <strong class="num" style="color:${out>0?"var(--red)":"var(--accent-dark)"}">${fmtRp(out)}</strong></span>
+          </div>`
+        :`<div style="font-size:12.5px;color:var(--muted)">Record each instalment separately — e.g. DP 50% now, pelunasan after completion. Every payment can have its own date, method and bank account.</div>`}
+      </div>`;})()}`:""}
       <div class="sub" style="color:var(--muted);font-size:12px">Header on the PDF will show: export date · project “${esc(p.name)}” · ${esc(p.location||"no location")} · the number above · issuer ${esc(projCompany(p).name)}.</div>
     </div>
 
@@ -2537,6 +2548,64 @@ async function toggleFinal(qid){
   await persist(saveQuotes,q.extra.final?"Marked FINAL — editing locked":"Unlocked for editing");
 }
 function exSet(id,k,v){ const q=getQuote(id); if(q?.extra?.final&&!PAY_KEYS.has(k)){ toast("🔒 Final document — unlock to edit"); render(); return; } q.extra=q.extra||{}; q.extra[k]=v; setDirty(true); }
+/* ---------- PO payments: a list of instalments (DP, termin, pelunasan) ----------
+   Legacy single-payment POs are read as a one-entry list, so nothing is lost. */
+function poPayments(q){
+  const x=q.extra||{};
+  if(Array.isArray(x.payments)) return x.payments;
+  if(x.paid) return [{id:"legacy",label:"Payment",date:x.paidDate||"",amount:quoteGrand(q),
+    method:x.payMethod||"Transfer",bank:x.payBank||"",no:x.payNo||"",name:x.payName||""}];
+  return [];
+}
+const poPaidTotal=q=>poPayments(q).reduce((a,p)=>a+(Number(p.amount)||0),0);
+const poOutstanding=q=>Math.max(0,quoteGrand(q)-poPaidTotal(q));
+const poFullyPaid=q=>quoteGrand(q)>0&&poPaidTotal(q)>=quoteGrand(q)-1;   // 1 rupiah rounding tolerance
+function poEnsureList(q){
+  q.extra=q.extra||{};
+  if(!Array.isArray(q.extra.payments)){
+    q.extra.payments=poPayments(q).map(p=>({...p,id:p.id==="legacy"?uid():p.id}));
+    delete q.extra.paid; delete q.extra.paidDate; delete q.extra.payMethod;
+    delete q.extra.payBank; delete q.extra.payNo; delete q.extra.payName;
+  }
+  return q.extra.payments;
+}
+function poAddPayment(qid,pct){
+  const q=getQuote(qid); if(q.extra?.final&&false) return;
+  const list=poEnsureList(q);
+  const remain=poOutstanding(q);
+  const amt=pct?Math.round(quoteGrand(q)*pct/100):remain;
+  const last=list[list.length-1];
+  list.push({id:uid(),label:list.length===0?(pct===50?"DP 50%":pct?pct+"%":"Payment 1"):(pct?pct+"%":"Pelunasan"),
+    date:todayISO(),amount:Math.min(amt||remain,remain||amt),method:last?.method||"Transfer",
+    bank:last?.bank||"",no:last?.no||"",name:last?.name||""});
+  setDirty(true); render();
+}
+function poSetPay(qid,pid,k,v){
+  const q=getQuote(qid), p=poEnsureList(q).find(x=>x.id===pid); if(!p) return;
+  p[k]=(k==="amount")?(Number(v)||0):v; setDirty(true); render();
+}
+function poDelPayment(qid,pid){
+  const q=getQuote(qid); q.extra.payments=poEnsureList(q).filter(x=>x.id!==pid); setDirty(true); render();
+}
+function poApplyAccount(qid,pid){
+  const q=getQuote(qid), i=$("#poAcc_"+pid)?.value;
+  if(i===""||i===undefined) return;
+  const acc=(getDistributor(q.extra?.distributor)?.bankAccounts||[])[Number(i)];
+  if(!acc) return;
+  const p=poEnsureList(q).find(x=>x.id===pid); if(!p) return;
+  p.bank=acc.bank; p.no=acc.no; p.name=acc.name; setDirty(true); render();
+}
+async function poSaveAccount(qid,pid){
+  const q=getQuote(qid), d=getDistributor(q.extra?.distributor);
+  if(!d) return alert("Choose the PO's distributor first.");
+  const p=poPayments(q).find(x=>x.id===pid)||{};
+  const acc={bank:(p.bank||"").trim(),no:(p.no||"").trim(),name:(p.name||"").trim()};
+  if(!acc.bank&&!acc.no) return alert("Fill in at least the bank and account number.");
+  d.bankAccounts=d.bankAccounts||[];
+  if(d.bankAccounts.some(a=>a.no===acc.no&&a.bank.toLowerCase()===acc.bank.toLowerCase())) return toast("Account already saved for "+d.name);
+  d.bankAccounts.push(acc);
+  await persist(saveDistributors,"Account saved to "+d.name);
+}
 function poSetPaid(id,on){
   const q=getQuote(id); q.extra=q.extra||{};
   q.extra.paid=on;
@@ -2991,7 +3060,12 @@ function printQuote(qid){
   }
   $("#printArea").innerHTML=`<div class="p-doc">
     ${docHeaderHTML(title,p,meta)}
-    ${isPO&&q.extra?.paid?`<div style="border:1.4pt solid #0A5C43;color:#0A5C43;display:inline-block;padding:3px 12px;font-weight:800;letter-spacing:.14em;margin-bottom:8px">LUNAS / PAID — ${fmtDate(q.extra.paidDate)}${q.extra.payMethod?" · "+esc(q.extra.payMethod):""}${q.extra.payBank?" · "+esc(q.extra.payBank)+" "+esc(q.extra.payNo||"")+(q.extra.payName?" a.n. "+esc(q.extra.payName):""):""}</div>`:""}
+    ${isPO&&poPayments(q).length?(()=>{const ps=poPayments(q),full=poFullyPaid(q);
+      return `<div style="border:1.4pt solid ${full?"#0A5C43":"#B4720E"};color:${full?"#0A5C43":"#B4720E"};padding:5px 10px;margin-bottom:8px;font-size:10.5px">
+        <strong style="letter-spacing:.12em">${full?"LUNAS / PAID IN FULL":"PARTIALLY PAID"}</strong>
+        ${ps.map(p=>`<div>• ${esc(p.label||"Payment")} — ${fmtRp(p.amount)} · ${fmtDate(p.date)}${p.method?" · "+esc(p.method):""}${p.bank?" · "+esc(p.bank)+" "+esc(p.no||""):""}</div>`).join("")}
+        ${full?"":`<div style="margin-top:2px"><strong>Outstanding: ${fmtRp(poOutstanding(q))}</strong></div>`}
+      </div>`;})():""}
     ${isPO?`<div style="border:1pt solid #111;padding:8px 10px;margin-bottom:10px;font-size:11px">
       <strong>TO — ${esc(q.extra?.distributor||"(distributor)")}</strong>
       ${dist?`<div style="color:#333;margin-top:2px">${dist.contact?"Attn: "+esc(dist.contact)+" · ":""}${esc(dist.phone||"")}${dist.email?" · "+esc(dist.email):""}${dist.address?"<br>"+esc(dist.address):""}</div>`:""}
