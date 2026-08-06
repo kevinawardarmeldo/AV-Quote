@@ -1109,10 +1109,12 @@ function renderDashboardTab(b){
   const deadIds=new Set(projs.filter(p=>["lost","cancelled"].includes(p.status)).map(p=>p.id));
   const pipeline=quotes.filter(q=>!deadIds.has(q.projectId)).reduce((a,q)=>a+quoteGrand(q),0);
   const invoiced=invs.reduce((a,q)=>a+quoteGrand(q),0);
-  const received=recs.reduce((a,q)=>a+(Number(q.extra?.amount)||0),0);
+  const received=recs.reduce((a,q)=>a+recSettled(q),0);        // invoice value cleared
+  const cashIn=recs.reduce((a,q)=>a+recCash(q),0);              // money that actually arrived
+  const withheld=received-cashIn;
   const receivable=projs.reduce((a,p)=>{
     const bi=invs.filter(q=>q.projectId===p.id).reduce((x,q)=>x+quoteGrand(q),0);
-    const br=recs.filter(q=>q.projectId===p.id).reduce((x,q)=>x+(Number(q.extra?.amount)||0),0);
+    const br=recs.filter(q=>q.projectId===p.id).reduce((x,q)=>x+recSettled(q),0);
     return a+Math.max(0,bi-br);},0);
   const poTotal=pos.reduce((a,q)=>a+quoteGrand(q),0);
   const payable=countable(pos).reduce((a,q)=>a+poOutstanding(q),0);   // only what is still owed
@@ -1125,7 +1127,7 @@ function renderDashboardTab(b){
     ...recs.map(r=>r.date),...pos.map(p=>p.extra?.paidDate)].filter(Boolean).map(d=>typeof d==="number"?d:Number(String(d).slice(0,4))).filter(y=>y>2000))].sort();
   // monthly cash flow
   const inM=Array(12).fill(0), outM=Array(12).fill(0);
-  recs.forEach(r=>{ if(r.date&&r.date.startsWith(dashYear)) inM[Number(r.date.slice(5,7))-1]+=(Number(r.extra?.amount)||0); });
+  recs.forEach(r=>{ if(r.date&&r.date.startsWith(dashYear)) inM[Number(r.date.slice(5,7))-1]+=recCash(r); });   // real cash only
   pos.forEach(o=>poPayments(o).forEach(p=>{ const d=p.date;
     if(d&&String(d).startsWith(dashYear)) outM[Number(String(d).slice(5,7))-1]+=(Number(p.amount)||0); }));
   const maxV=Math.max(1,...inM,...outM);
@@ -1142,7 +1144,7 @@ function renderDashboardTab(b){
   // receivables table
   const recvRows=projs.map(p=>{
     const bi=invs.filter(q=>q.projectId===p.id).reduce((x,q)=>x+quoteGrand(q),0);
-    const br=recs.filter(q=>q.projectId===p.id).reduce((x,q)=>x+(Number(q.extra?.amount)||0),0);
+    const br=recs.filter(q=>q.projectId===p.id).reduce((x,q)=>x+recSettled(q),0);
     return {p,bi,br,out:bi-br};
   }).filter(x=>x.out>0).sort((a,b)=>b.out-a.out);
   // payables (unpaid POs)
@@ -1163,7 +1165,7 @@ function renderDashboardTab(b){
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">
       ${kpi("Pipeline (quotations)",pipeline,"var(--accent)","excl. lost/cancelled projects")}
       ${kpi("Invoiced",invoiced,"var(--accent)",invs.length+" invoice(s)")}
-      ${kpi("Received",received,"var(--accent-dark)",recs.length+" receipt(s)")}
+      ${kpi("Received (invoice cleared)",received,"var(--accent-dark)",withheld>0?"cash "+fmtRpShort(cashIn)+" + withheld "+fmtRpShort(withheld):recs.length+" receipt(s)")}
       ${kpi("Receivables outstanding",receivable,"var(--red)","invoiced − received")}
       ${kpi("Purchasing (PO)",poTotal,"var(--amber)",pos.length+" PO(s)")}
       ${kpi("Payables (outstanding)",payable,"var(--red)",pos.filter(q=>poOutstanding(q)>0).length+" PO(s) with balance")}
@@ -1597,7 +1599,7 @@ function docTable(list,kind,emptyMsg){
           <td class="t-right num" style="color:var(--muted)">${quoteDiscount(q)?"− "+fmtRp(quoteDiscount(q)):"—"}</td>
           <td class="t-right num" style="font-weight:700">${fmtRp(quoteGrand(q))}</td>`
         :`<td>${esc(q.extra?.recvFrom||"—")}</td>
-          <td class="t-right num" style="font-weight:700">${fmtRp(q.extra?.amount||0)}</td>`}
+          <td class="t-right num" style="font-weight:700">${fmtRp(recCash(q))}${recDeductTotal(q)?`<br><span style="font-size:10.5px;color:var(--muted);font-weight:400">clears ${fmtRp(recSettled(q))}</span>`:""}</td>`}
         <td class="t-right" style="white-space:nowrap">${docRowActions(q,kind)}</td>
       </tr>`).join("")
     :`<tr><td colspan="9"><div class="empty">${emptyMsg}</div></td></tr>`}
@@ -1677,7 +1679,8 @@ function renderProjectDocs(b,p){
 }
 function renderProjectBilling(b,p){
   const sos=kindQuotes(p.id,"so"), invs=kindQuotes(p.id,"invoice"), recs=kindQuotes(p.id,"receipt");
-  const paid=liveOnly(recs).reduce((a,r)=>a+(Number(r.extra?.amount)||0),0);
+  const paid=liveOnly(recs).reduce((a,r)=>a+recSettled(r),0);
+  const cashGot=liveOnly(recs).reduce((a,r)=>a+recCash(r),0);
   const billed=liveOnly(invs).reduce((a,q)=>a+quoteGrand(q),0);
   const soTotal=liveOnly(sos).reduce((a,q)=>a+quoteGrand(q),0);
   b.innerHTML=`
@@ -1700,7 +1703,8 @@ function renderProjectBilling(b,p){
     <div class="card card-pad" style="max-width:560px"><div class="totals" style="max-width:none">
       ${sos.length?`<div class="line"><span>Total sales orders</span><span class="num">${fmtRp(soTotal)}</span></div>`:""}
       <div class="line"><span>Total invoiced${sos.length?" ("+fmtN(soTotal>0?billed/soTotal*100:0)+"% of SO)":""}</span><span class="num">${fmtRp(billed)}</span></div>
-      <div class="line"><span>Total receipted (paid)</span><span class="num">${fmtRp(paid)}</span></div>
+      <div class="line"><span>Total receipted (invoice cleared)</span><span class="num">${fmtRp(paid)}</span></div>
+      ${paid!==cashGot?`<div class="line" style="font-size:12.5px;color:var(--muted)"><span>— of which cash received / withheld</span><span class="num">${fmtRp(cashGot)} / ${fmtRp(paid-cashGot)}</span></div>`:""}
       <div class="line grand"><span>Outstanding</span><span class="num" style="color:${billed-paid>0?"var(--red)":"var(--accent-dark)"}">${fmtRp(billed-paid)}</span></div>
     </div></div>`:""}`;
 }
@@ -2202,7 +2206,7 @@ function revHistoryHTML(q){
           <td class="num" style="font-weight:700">Rev ${revNo(x)}${x.id===q.id?" ←":""}</td>
           <td>${esc(x.quoteNumber||"—")}${x.extra?.final?' <span class="pill" style="background:var(--ink);color:#fff">FINAL</span>':""}</td>
           <td class="num" style="font-size:12.5px">${fmtDate(x.date)}</td>
-          <td class="t-right num">${x.kind==="receipt"?fmtRp(x.extra?.amount||0):fmtRp(quoteGrand(x))}</td>
+          <td class="t-right num">${x.kind==="receipt"?fmtRp(recCash(x)):fmtRp(quoteGrand(x))}</td>
           <td style="font-size:12px;color:var(--muted)">${esc(x.extra?.revNote||(revNo(x)===1?"original":""))}</td>
         </tr>`).join("")}
       </tbody></table>
@@ -2550,6 +2554,33 @@ async function toggleFinal(qid){
 function exSet(id,k,v){ const q=getQuote(id); if(q?.extra?.final&&!PAY_KEYS.has(k)){ toast("🔒 Final document — unlock to edit"); render(); return; } q.extra=q.extra||{}; q.extra[k]=v; setDirty(true); }
 /* ---------- PO payments: a list of instalments (DP, termin, pelunasan) ----------
    Legacy single-payment POs are read as a one-entry list, so nothing is lost. */
+/* ---------- receipts: cash received vs invoice amount settled ----------
+   Clients commonly withhold PPh 23 (2%) and bank fees, so the cash that lands
+   is less than the invoice it clears. `amount` = cash actually received,
+   deductions = withheld amounts; settled = amount + deductions is what the
+   receivable is reduced by. */
+const recDeductions=q=>Array.isArray(q?.extra?.deductions)?q.extra.deductions:[];
+const recCash=q=>Number(q?.extra?.amount)||0;
+const recDeductTotal=q=>recDeductions(q).reduce((a,d)=>a+(Number(d.amount)||0),0);
+const recSettled=q=>recCash(q)+recDeductTotal(q);
+function recAddDeduction(qid,kind){
+  const q=getQuote(qid); q.extra=q.extra||{};
+  q.extra.deductions=recDeductions(q).slice();
+  const base=Number(q.extra.grossRef||0)||recSettled(q)||recCash(q);
+  const preset=kind==="pph23"?{label:"PPh 23 (2%)",amount:Math.round(base*0.02)}
+    :kind==="pph4"?{label:"PPh Final 4 ayat 2 (1,75%)",amount:Math.round(base*0.0175)}
+    :kind==="fee"?{label:"Biaya transfer antar bank",amount:6500}
+    :{label:"",amount:0};
+  q.extra.deductions.push({id:uid(),...preset});
+  setDirty(true); render();
+}
+function recSetDeduction(qid,did,k,v){
+  const q=getQuote(qid), d=recDeductions(q).find(x=>x.id===did); if(!d) return;
+  d[k]=(k==="amount")?(Number(v)||0):v; setDirty(true); render();
+}
+function recDelDeduction(qid,did){
+  const q=getQuote(qid); q.extra.deductions=recDeductions(q).filter(x=>x.id!==did); setDirty(true); render();
+}
 function poPayments(q){
   const x=q.extra||{};
   if(Array.isArray(x.payments)) return x.payments;
@@ -2747,14 +2778,35 @@ function renderReceipt(v,q,p){
       <div class="field"><label>Received from (Telah terima dari)</label><input value="${esc(x.recvFrom||"")}" placeholder="client / payer name" onchange="exSet('${q.id}','recvFrom',this.value)"></div>
       <div class="field"><label>For payment of (Untuk pembayaran)</label><textarea rows="2" onchange="exSet('${q.id}','forText',this.value)">${esc(x.forText||"")}</textarea></div>
       <div class="field-row c2">
-        <div class="field"><label>Amount (IDR)</label><input type="number" min="0" value="${x.amount||0}" onchange="exSet('${q.id}','amount',Number(this.value)||0);render()"></div>
+        <div class="field"><label>Cash actually received (IDR)</label><input type="number" min="0" value="${x.amount||0}" onchange="exSet('${q.id}','amount',Number(this.value)||0);render()"></div>
         <div class="field"><label>Payment method</label>
           <select onchange="exSet('${q.id}','payMethod',this.value)">
             ${["Transfer","Cash","Cheque / Giro"].map(m=>`<option ${x.payMethod===m?"selected":""}>${m}</option>`).join("")}
           </select></div>
       </div>
+      <div style="border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+          <span class="eyebrow">Deductions withheld by the client (optional)</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn small" onclick="recAddDeduction('${q.id}','pph23')">+ PPh 23 (2%)</button>
+            <button class="btn small" onclick="recAddDeduction('${q.id}','fee')">+ Transfer fee</button>
+            <button class="btn small" onclick="recAddDeduction('${q.id}','other')">+ Other</button>
+          </div>
+        </div>
+        ${recDeductions(q).length?`<table class="grid" style="margin-bottom:8px">
+          <tbody>${recDeductions(q).map(d=>`<tr>
+            <td><input class="inline-input" value="${esc(d.label||"")}" placeholder="e.g. PPh 23 (2%)" onchange="recSetDeduction('${q.id}','${d.id}','label',this.value)"></td>
+            <td style="width:150px"><input class="inline-input num" type="number" min="0" value="${Number(d.amount)||0}" onchange="recSetDeduction('${q.id}','${d.id}','amount',this.value)"></td>
+            <td class="rowtools" style="width:34px"><button class="del" onclick="recDelDeduction('${q.id}','${d.id}')">✕</button></td></tr>`).join("")}</tbody></table>
+          <div style="display:flex;justify-content:flex-end;gap:22px;font-size:13px;padding-top:4px;border-top:1px solid var(--line)">
+            <span>Cash received <strong class="num">${fmtRp(recCash(q))}</strong></span>
+            <span>Withheld <strong class="num" style="color:var(--amber)">${fmtRp(recDeductTotal(q))}</strong></span>
+            <span>Invoice settled <strong class="num" style="color:var(--accent-dark)">${fmtRp(recSettled(q))}</strong></span>
+          </div>`
+        :`<div style="font-size:12.5px;color:var(--muted)">If the client withheld PPh 23 or a bank fee, add it here. The receipt then clears the full invoice amount while cash flow still shows only what actually arrived.</div>`}
+      </div>
       <div style="background:var(--accent-soft);border-radius:8px;padding:10px 14px;font-size:13px">
-        <span class="eyebrow">Amount in words (auto)</span><br>
+        <span class="eyebrow">Amount in words (auto) — cash received</span><br>
         <em style="text-transform:capitalize">${esc(terbilang(x.amount||0))}</em>
       </div>
     </div>`;
@@ -3263,6 +3315,12 @@ function printReceipt(qid){
       <tr><td class="k">Untuk pembayaran<br><span style="font-size:9px;color:#777">For payment of</span></td><td>: ${esc(x.forText||"—")}</td></tr>
       <tr><td class="k">Metode pembayaran<br><span style="font-size:9px;color:#777">Payment method</span></td><td>: ${esc(x.payMethod||"—")}</td></tr>
     </table>
+    ${recDeductTotal(q)?`<table class="p-tot" style="width:56%;margin-left:0;margin-top:4px">
+      <tbody>
+        <tr><td>Nilai tagihan diselesaikan / Invoice amount settled</td><td class="num-p" style="text-align:right">${fmtRp(recSettled(q))}</td></tr>
+        ${recDeductions(q).map(d=>`<tr><td>${esc(d.label||"Potongan")}</td><td class="num-p" style="text-align:right">− ${fmtRp(d.amount)}</td></tr>`).join("")}
+        <tr class="g"><td>DITERIMA TUNAI / CASH RECEIVED</td><td class="num-p" style="text-align:right">${fmtRp(recCash(q))}</td></tr>
+      </tbody></table>`:""}
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:26px">
       <div style="border:1.4pt solid #111;padding:8px 16px;font-size:16px;font-weight:800" class="num-p">${fmtRp(x.amount||0)}</div>
       <div style="width:230px;font-size:11px;text-align:center">${esc(p.location||"")}, ${fmtDate(q.date)}<div style="border-bottom:1px solid #111;height:56px;margin:4px 0 5px"></div>
