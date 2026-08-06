@@ -973,6 +973,49 @@ function diagData(){
           heavy,rows:L.tabs.filter(t=>t.rows).sort((a,b)=>b.bytes-a.bytes),
           p3:project(3),p10:project(10)};
 }
+function printWithholding(year){
+  const p0=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY);
+  const pids=new Set(p0.map(p=>p.id));
+  const ex=excludedFromTotals();
+  const rows=DB.quotations.filter(r=>(r.kind==="receipt")&&pids.has(r.projectId)&&!ex.has(r.id)
+    &&recDeductions(r).length&&String(r.date||"").startsWith(String(year)))
+    .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  if(!rows.length) return alert("No withholding recorded in "+year+".");
+  const co=DB.companies.find(c=>c.id===ACTIVE_COMPANY)||{};
+  const tax=rows.reduce((a,r)=>a+recTaxWithheld(r),0), other=rows.reduce((a,r)=>a+recOtherDeduct(r),0);
+  const settled=rows.reduce((a,r)=>a+recSettled(r),0);
+  $("#printArea").innerHTML=`<div class="p-doc">
+    <div class="p-head">
+      <div class="p-co">${esc(co.name||"")}<small>${esc(co.tagline||"")}
+${esc(co.address||"")}</small></div>
+      <div class="p-doc-title"><h2>REKAP PPh DIPOTONG</h2><div style="font-size:10px">Withholding tax recap ${year}</div></div>
+    </div>
+    <table class="p-meta"><tbody>
+      <tr><td class="k">Periode</td><td>: Januari – Desember ${year}</td></tr>
+      <tr><td class="k">Jumlah transaksi</td><td>: ${rows.length} kwitansi</td></tr>
+      <tr><td class="k">Dicetak</td><td>: ${new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})}</td></tr>
+    </tbody></table>
+    <table class="p-table">
+      <thead><tr><th style="width:22px">No</th><th style="width:74px">Tanggal</th><th>Kwitansi</th><th>Pemberi kerja / proyek</th>
+        <th style="width:88px;text-align:right">Nilai tagihan</th><th style="width:80px;text-align:right">PPh dipotong</th><th style="width:70px;text-align:right">Lain-lain</th></tr></thead>
+      <tbody>${rows.map((r,i)=>{const pr=getProject(r.projectId);return `<tr>
+        <td class="num-p">${i+1}</td><td class="num-p">${fmtDate(r.date)}</td>
+        <td>${esc(r.quoteNumber||r.title||"—")}</td>
+        <td>${esc(pr?.client||"—")}${pr?.name?" — "+esc(pr.name):""}</td>
+        <td class="num-p" style="text-align:right">${fmtRp(recSettled(r))}</td>
+        <td class="num-p" style="text-align:right">${recTaxWithheld(r)?fmtRp(recTaxWithheld(r)):"—"}</td>
+        <td class="num-p" style="text-align:right">${recOtherDeduct(r)?fmtRp(recOtherDeduct(r)):"—"}</td></tr>`;}).join("")}
+        <tr class="subtotal"><td colspan="4" style="text-align:right">TOTAL</td>
+          <td class="num-p" style="text-align:right">${fmtRp(settled)}</td>
+          <td class="num-p" style="text-align:right">${fmtRp(tax)}</td>
+          <td class="num-p" style="text-align:right">${fmtRp(other)}</td></tr>
+      </tbody></table>
+    <p style="font-size:10.5px;margin-top:8px">PPh yang dipotong pihak pemberi kerja merupakan kredit pajak — lampirkan bukti potong untuk setiap transaksi di atas.
+      Potongan lain-lain (biaya transfer bank) bukan kredit pajak. /
+      <em>Withheld income tax is a creditable prepayment; attach the client's withholding slip for each line.</em></p>
+  </div>`;
+  doPrint((co.name||"company")+" - rekap PPh "+year);
+}
 function printDiagnostics(){
   const d=diagData(); if(!d) return;
   const co=DB.companies.find(c=>c.id===ACTIVE_COMPANY);
@@ -1197,6 +1240,50 @@ function renderDashboardTab(b){
             <td class="t-right num" style="font-weight:700">${fmtRp(poOutstanding(q))}${poPaidTotal(q)?`<br><span style="font-size:10.5px;color:var(--muted);font-weight:400">of ${fmtRp(quoteGrand(q))}</span>`:""}</td></tr>`).join("")
         :'<tr><td colspan="3"><div class="empty">No outstanding purchase orders 🎉</div></td></tr>'}</tbody></table></div>
     </div>
+
+    ${(()=>{
+      const rows=recs.filter(r=>recDeductions(r).length&&String(r.date||"").startsWith(dashYear))
+        .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+      const tax=rows.reduce((a,r)=>a+recTaxWithheld(r),0);
+      const other=rows.reduce((a,r)=>a+recOtherDeduct(r),0);
+      const byType={};
+      rows.forEach(r=>recDeductions(r).forEach(d=>{const k=(d.label||"Other").trim();
+        byType[k]=byType[k]||{sum:0,n:0,tax:isTaxDeduction(d)}; byType[k].sum+=Number(d.amount)||0; byType[k].n++;}));
+      if(!rows.length) return "";
+      return `<div class="card" style="margin-bottom:20px">
+        <div class="card-pad" style="padding-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <span class="eyebrow">Withheld by clients in ${dashYear} — PPh credits &amp; deductions</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:12.5px;color:var(--muted)">tax credit</span>
+            <span class="num" style="font-size:18px;font-weight:800;color:var(--accent-dark)" title="${fmtRp(tax)}">${fmtRpShort(tax)}</span>
+            <button class="btn small" onclick="printWithholding(${dashYear})">⤓ PDF</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;padding:0 20px 10px">
+          ${Object.entries(byType).sort((a,b)=>b[1].sum-a[1].sum).map(([k,v])=>`
+            <span class="pill ${v.tax?"":"amber"}" title="${v.n} receipt(s)">${esc(k)}: ${fmtRp(v.sum)}</span>`).join("")}
+        </div>
+        <div style="overflow-x:auto"><table class="grid" style="min-width:760px">
+          <thead><tr><th style="width:96px">Date</th><th>Receipt</th><th>Client / project</th>
+            <th class="t-right" style="width:120px">Invoice settled</th>
+            <th class="t-right" style="width:110px">PPh withheld</th>
+            <th class="t-right" style="width:100px">Other</th></tr></thead>
+          <tbody>${rows.map(r=>{const pr=getProject(r.projectId);return `
+            <tr class="rowlink" onclick="go({view:'quote',quoteId:'${r.id}'})">
+              <td class="num" style="font-size:12.5px">${fmtDate(r.date)}</td>
+              <td style="font-weight:600">${esc(r.quoteNumber||r.title||"—")}</td>
+              <td style="font-size:12.5px">${esc(pr?.client||"—")}<br><span style="color:var(--muted)">${esc(pr?.name||"")}</span></td>
+              <td class="t-right num">${fmtRp(recSettled(r))}</td>
+              <td class="t-right num" style="font-weight:700;color:var(--accent-dark)">${recTaxWithheld(r)?fmtRp(recTaxWithheld(r)):"—"}</td>
+              <td class="t-right num" style="color:var(--muted)">${recOtherDeduct(r)?fmtRp(recOtherDeduct(r)):"—"}</td></tr>`;}).join("")}
+            <tr style="background:#F5F8F5;font-weight:700"><td colspan="4" class="t-right">TOTAL ${dashYear}</td>
+              <td class="t-right num" style="color:var(--accent-dark)">${fmtRp(tax)}</td>
+              <td class="t-right num">${fmtRp(other)}</td></tr>
+          </tbody></table></div>
+        <div style="padding:8px 20px 14px;font-size:11.5px;color:var(--muted)">
+          PPh withheld is a tax credit against your annual corporate tax — collect the client's <em>bukti potong</em> for each row.
+          Other deductions (bank fees) are costs, not credits.</div>
+      </div>`;})()}
 
     <div class="card">
       <div class="card-pad" style="padding-bottom:8px"><span class="eyebrow">Project profitability — quotation vs RAP vs actual PO spend</span></div>
@@ -2563,6 +2650,12 @@ const recDeductions=q=>Array.isArray(q?.extra?.deductions)?q.extra.deductions:[]
 const recCash=q=>Number(q?.extra?.amount)||0;
 const recDeductTotal=q=>recDeductions(q).reduce((a,d)=>a+(Number(d.amount)||0),0);
 const recSettled=q=>recCash(q)+recDeductTotal(q);
+/* PPh withheld by a client is a TAX CREDIT you reclaim; a transfer fee is just a
+   cost. Percentage-based deductions and anything labelled pph/pajak/tax count as
+   creditable withholding. */
+const isTaxDeduction=d=>!!d.pct||/pph|pajak|\btax\b|withhold/i.test(String(d.label||""));
+const recTaxWithheld=q=>recDeductions(q).filter(isTaxDeduction).reduce((a,d)=>a+(Number(d.amount)||0),0);
+const recOtherDeduct=q=>recDeductions(q).filter(d=>!isTaxDeduction(d)).reduce((a,d)=>a+(Number(d.amount)||0),0);
 /* Withholding tax is a percentage OF THE GROSS INVOICE, not of the cash that
    remains after it. So we gross up:  gross = (cash + flat deductions) / (1 - rate)
    and the withheld amount = gross - (cash + flat deductions).
