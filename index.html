@@ -2563,23 +2563,47 @@ const recDeductions=q=>Array.isArray(q?.extra?.deductions)?q.extra.deductions:[]
 const recCash=q=>Number(q?.extra?.amount)||0;
 const recDeductTotal=q=>recDeductions(q).reduce((a,d)=>a+(Number(d.amount)||0),0);
 const recSettled=q=>recCash(q)+recDeductTotal(q);
+/* Withholding tax is a percentage OF THE GROSS INVOICE, not of the cash that
+   remains after it. So we gross up:  gross = (cash + flat deductions) / (1 - rate)
+   and the withheld amount = gross - (cash + flat deductions).
+   Percentage deductions carry their rate so they recalculate whenever the cash
+   figure or a flat deduction changes. */
+function recRecalc(q){
+  const list=recDeductions(q);
+  const flat=list.filter(d=>!d.pct).reduce((a,d)=>a+(Number(d.amount)||0),0);
+  const pctSum=list.filter(d=>d.pct).reduce((a,d)=>a+(Number(d.pct)||0),0)/100;
+  if(pctSum>0&&pctSum<1){
+    const gross=(recCash(q)+flat)/(1-pctSum);
+    list.filter(d=>d.pct).forEach(d=>{ d.amount=Math.round(gross*(Number(d.pct)||0)/100); });
+  }
+}
 function recAddDeduction(qid,kind){
   const q=getQuote(qid); q.extra=q.extra||{};
   q.extra.deductions=recDeductions(q).slice();
-  const base=Number(q.extra.grossRef||0)||recSettled(q)||recCash(q);
-  const preset=kind==="pph23"?{label:"PPh 23 (2%)",amount:Math.round(base*0.02)}
-    :kind==="pph4"?{label:"PPh Final 4 ayat 2 (1,75%)",amount:Math.round(base*0.0175)}
+  const preset=kind==="pph23"?{label:"PPh 23 (2%)",pct:2,amount:0}
+    :kind==="pph4"?{label:"PPh Final 4 ayat 2 (1,75%)",pct:1.75,amount:0}
     :kind==="fee"?{label:"Biaya transfer antar bank",amount:6500}
     :{label:"",amount:0};
   q.extra.deductions.push({id:uid(),...preset});
+  recRecalc(q);
   setDirty(true); render();
 }
 function recSetDeduction(qid,did,k,v){
   const q=getQuote(qid), d=recDeductions(q).find(x=>x.id===did); if(!d) return;
-  d[k]=(k==="amount")?(Number(v)||0):v; setDirty(true); render();
+  if(k==="pct"){ d.pct=Number(v)||0; if(!d.pct) delete d.pct; }
+  else if(k==="amount"){ d.amount=Number(v)||0; delete d.pct; }   // typing an amount pins it
+  else d[k]=v;
+  recRecalc(q); setDirty(true); render();
 }
+function recDelDeduction2(qid,did){ recDelDeduction(qid,did); }
 function recDelDeduction(qid,did){
-  const q=getQuote(qid); q.extra.deductions=recDeductions(q).filter(x=>x.id!==did); setDirty(true); render();
+  const q=getQuote(qid); q.extra.deductions=recDeductions(q).filter(x=>x.id!==did);
+  recRecalc(q); setDirty(true); render();
+}
+/* cash figure changed → percentage deductions follow */
+function recSetCash(qid,v){
+  const q=getQuote(qid); q.extra=q.extra||{}; q.extra.amount=Number(v)||0;
+  recRecalc(q); setDirty(true); render();
 }
 function poPayments(q){
   const x=q.extra||{};
@@ -2778,7 +2802,7 @@ function renderReceipt(v,q,p){
       <div class="field"><label>Received from (Telah terima dari)</label><input value="${esc(x.recvFrom||"")}" placeholder="client / payer name" onchange="exSet('${q.id}','recvFrom',this.value)"></div>
       <div class="field"><label>For payment of (Untuk pembayaran)</label><textarea rows="2" onchange="exSet('${q.id}','forText',this.value)">${esc(x.forText||"")}</textarea></div>
       <div class="field-row c2">
-        <div class="field"><label>Cash actually received (IDR)</label><input type="number" min="0" value="${x.amount||0}" onchange="exSet('${q.id}','amount',Number(this.value)||0);render()"></div>
+        <div class="field"><label>Cash actually received (IDR)</label><input type="number" min="0" value="${x.amount||0}" onchange="recSetCash('${q.id}',this.value)"></div>
         <div class="field"><label>Payment method</label>
           <select onchange="exSet('${q.id}','payMethod',this.value)">
             ${["Transfer","Cash","Cheque / Giro"].map(m=>`<option ${x.payMethod===m?"selected":""}>${m}</option>`).join("")}
@@ -2794,15 +2818,21 @@ function renderReceipt(v,q,p){
           </div>
         </div>
         ${recDeductions(q).length?`<table class="grid" style="margin-bottom:8px">
+          <thead><tr><th>Description</th><th style="width:88px" class="t-right">Rate %</th><th style="width:150px" class="t-right">Amount</th><th style="width:34px"></th></tr></thead>
           <tbody>${recDeductions(q).map(d=>`<tr>
             <td><input class="inline-input" value="${esc(d.label||"")}" placeholder="e.g. PPh 23 (2%)" onchange="recSetDeduction('${q.id}','${d.id}','label',this.value)"></td>
-            <td style="width:150px"><input class="inline-input num" type="number" min="0" value="${Number(d.amount)||0}" onchange="recSetDeduction('${q.id}','${d.id}','amount',this.value)"></td>
-            <td class="rowtools" style="width:34px"><button class="del" onclick="recDelDeduction('${q.id}','${d.id}')">✕</button></td></tr>`).join("")}</tbody></table>
+            <td><input class="inline-input num" type="number" min="0" max="99" step="any" value="${d.pct??""}" placeholder="flat" onchange="recSetDeduction('${q.id}','${d.id}','pct',this.value)"></td>
+            <td><input class="inline-input num" type="number" min="0" value="${Number(d.amount)||0}" ${d.pct?'style="color:var(--muted)" title="calculated from the rate — type here to override"':""} onchange="recSetDeduction('${q.id}','${d.id}','amount',this.value)"></td>
+            <td class="rowtools"><button class="del" onclick="recDelDeduction('${q.id}','${d.id}')">✕</button></td></tr>`).join("")}</tbody></table>
           <div style="display:flex;justify-content:flex-end;gap:22px;font-size:13px;padding-top:4px;border-top:1px solid var(--line)">
             <span>Cash received <strong class="num">${fmtRp(recCash(q))}</strong></span>
             <span>Withheld <strong class="num" style="color:var(--amber)">${fmtRp(recDeductTotal(q))}</strong></span>
             <span>Invoice settled <strong class="num" style="color:var(--accent-dark)">${fmtRp(recSettled(q))}</strong></span>
-          </div>`
+          </div>
+          ${(()=>{const pcts=recDeductions(q).filter(d=>d.pct); if(!pcts.length||!recSettled(q)) return "";
+            return `<div style="text-align:right;font-size:11.5px;color:var(--muted);margin-top:3px">
+              ${pcts.map(d=>`${esc(d.label||"rate")}: ${fmtRp(d.amount)} = ${fmtN(d.pct)}% × ${fmtRp(recSettled(q))} ✓`).join(" · ")}
+              <br>gross-up: ${fmtRp(recCash(q))} ÷ ${fmtN(100-pcts.reduce((a,d)=>a+Number(d.pct||0),0))}% = ${fmtRp(recSettled(q))}</div>`;})()}`
         :`<div style="font-size:12.5px;color:var(--muted)">If the client withheld PPh 23 or a bank fee, add it here. The receipt then clears the full invoice amount while cash flow still shows only what actually arrived.</div>`}
       </div>
       <div style="background:var(--accent-soft);border-radius:8px;padding:10px 14px;font-size:13px">
