@@ -2704,6 +2704,20 @@ function exSet(id,k,v){ const q=getQuote(id); if(q?.extra?.final&&!PAY_KEYS.has(
    is less than the invoice it clears. `amount` = cash actually received,
    deductions = withheld amounts; settled = amount + deductions is what the
    receivable is reduced by. */
+/* ---------- company bank accounts (money in / money out) ---------- */
+const coAccounts=cid=>(DB.companies.find(c=>c.id===cid)?.accounts)||[];
+function acctLabel(cid,aid){
+  const a=coAccounts(cid).find(x=>x.id===aid);
+  return a?((a.label?a.label+" — ":"")+a.bank+(a.no?" "+a.no:"")):"";
+}
+function acctSelectHTML(cid,selected,onchange,extraStyle){
+  const list=coAccounts(cid);
+  if(!list.length) return `<span style="font-size:11.5px;color:var(--muted)">No company accounts yet — add them in the Companies tab.</span>`;
+  return `<select onchange="${onchange}" style="${extraStyle||""}border:1px solid var(--line);border-radius:8px;padding:7px 9px">
+    <option value="">— choose account —</option>
+    ${list.map(a=>`<option value="${a.id}" ${selected===a.id?"selected":""}>${esc((a.label?a.label+" — ":"")+a.bank+(a.no?" "+a.no:""))}</option>`).join("")}
+  </select>`;
+}
 const recDeductions=q=>Array.isArray(q?.extra?.deductions)?q.extra.deductions:[];
 const recCash=q=>Number(q?.extra?.amount)||0;
 const recDeductTotal=q=>recDeductions(q).reduce((a,d)=>a+(Number(d.amount)||0),0);
