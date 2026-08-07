@@ -256,7 +256,7 @@ const SHEETS = {
   NoteTemplates:["ID","Name","Content"],
   SignaturePresets:["ID","Name","JSON"],
   Distributors: ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies","Bank Accounts"],
-  Companies:    ["ID","Name","Tagline","Address","Contact","Bank Details"],
+  Companies:    ["ID","Name","Tagline","Address","Contact","Bank Details","Accounts"],
   Users:        ["ID","Email","Roles","Companies","Locked"],
   Clients:      ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies"]
 };
@@ -446,7 +446,7 @@ async function loadAll(){
   DB.templates=nt.filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",content:r[2]||""}));
   DB.sigPresets=(sp||[]).filter(r=>r[0]).map(r=>{let j={};try{j=JSON.parse(r[2]||"{}")}catch(e){} return {id:r[0],name:r[1]||"",...j};});
   DB.distributors=(di||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",contact:r[2]||"",phone:r[3]||"",email:r[4]||"",address:r[5]||"",notes:r[6]||"",companies:(r[7]||"").split(",").filter(Boolean),bankAccounts:(()=>{try{return JSON.parse(r[8]||"[]")}catch(e){return []}})()}));
-  DB.companies=(co||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",tagline:r[2]||"",address:r[3]||"",contact:r[4]||"",bank:r[5]||""}));
+  DB.companies=(co||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",tagline:r[2]||"",address:r[3]||"",contact:r[4]||"",bank:r[5]||"",accounts:(()=>{try{return JSON.parse(r[6]||"[]")}catch(e){return []}})()}));
   DB.users=(us||[]).filter(r=>r[0]).map(r=>({id:r[0],email:r[1]||"",roles:(r[2]||"").split(",").filter(Boolean),companies:(r[3]||"").split(",").filter(Boolean),locked:r[4]==="TRUE"}));
   DB.clients=(cl||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",contact:r[2]||"",phone:r[3]||"",email:r[4]||"",address:r[5]||"",notes:r[6]||"",companies:(r[7]||"").split(",").filter(Boolean)}));
 }
@@ -527,7 +527,7 @@ const saveSigPresets=()=>saveTab("SignaturePresets",DB.sigPresets.map(t=>[t.id,t
 const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0},extra:q.extra||{}}),new Date().toISOString()]));
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
 const saveDistributors=()=>saveTab("Distributors",DB.distributors.map(d=>[d.id,d.name,d.contact,d.phone,d.email,d.address,d.notes,(d.companies||[]).join(","),JSON.stringify(d.bankAccounts||[])]));
-const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.tagline,c.address,c.contact,c.bank]));
+const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.tagline,c.address,c.contact,c.bank,JSON.stringify(c.accounts||[])]));
 const saveUsers=()=>saveTab("Users",DB.users.map(u=>[u.id,u.email,u.roles.join(","),u.companies.join(","),u.locked?"TRUE":"FALSE"]));
 const saveClients=()=>saveTab("Clients",DB.clients.map(c=>[c.id,c.name,c.contact,c.phone,c.email,c.address,c.notes,(c.companies||[]).join(",")]));
 async function persist(fn,msg){
