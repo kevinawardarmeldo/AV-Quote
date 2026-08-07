@@ -1189,12 +1189,12 @@ function openAcctTransactions(accId){
       who:r.extra?.recvFrom||getProject(r.projectId)?.client||"",proj:getProject(r.projectId)?.name||"",qid:r.id,
       note:recDeductTotal(r)?("clears "+fmtRp(recSettled(r))):""});
   });
-  DB.quotations.filter(q=>pids.has(q.projectId)&&["po","jcs"].includes(q.kind||"quote")).forEach(o=>{
+  DB.quotations.filter(q=>pids.has(q.projectId)&&(q.kind||"quote")==="po").forEach(o=>{
     poPayments(o).forEach(p=>{
       if(!String(p.date||"").startsWith(dashYear)) return;
       if(!match(p.fromAccount)) return;
-      tx.push({date:p.date,dir:"out",amount:Number(p.amount)||0,doc:o.quoteNumber||o.title||KIND_LABEL[o.kind],
-        who:o.extra?.distributor||(o.kind==="jcs"?"Crew / job costs":""),proj:getProject(o.projectId)?.name||"",qid:o.id,
+      tx.push({date:p.date,dir:"out",amount:Number(p.amount)||0,doc:o.quoteNumber||o.title||"PO",
+        who:o.extra?.distributor||"",proj:getProject(o.projectId)?.name||"",qid:o.id,
         note:p.label||""});
     });
   });
@@ -1237,7 +1237,7 @@ function renderDashboardTab(b){
   const sup=supersededIds();   // exclude superseded revisions from all financials
   const docs=k=>DB.quotations.filter(q=>pids.has(q.projectId)&&(q.kind||"quote")===k&&!sup.has(q.id));
   const quotes=docs("quote"), invs=docs("invoice"), recs=docs("receipt"), pos=docs("po"), raps=docs("rap"), jcss=docs("jcs");
-  const costDocs=[...pos,...jcss];   // documents that carry outgoing payments
+  const costDocs=pos;   // payments live on POs — the JCS is a plan, pay crew via their own POs
   // KPIs
   const deadIds=new Set(projs.filter(p=>["lost","cancelled"].includes(p.status)).map(p=>p.id));
   const pipeline=quotes.filter(q=>!deadIds.has(q.projectId)).reduce((a,q)=>a+quoteGrand(q),0);
@@ -1286,7 +1286,7 @@ function renderDashboardTab(b){
   const profRows=projs.map(p=>{
     const g=k=>docs(k).filter(q=>q.projectId===p.id).reduce((x,q)=>x+quoteGrand(q),0);
     const j=g("jcs");
-    return {p,q:g("quote"),r:g("rap"),j,o:g("po"),cost:g("rap")+j,act:g("po")+j};
+    return {p,q:g("quote"),r:g("rap"),j,o:g("po"),cost:g("rap")+j,act:g("po")};
   }).filter(x=>x.q||x.cost||x.o).sort((a,b)=>b.q-a.q);
   b.innerHTML=`
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
@@ -1347,7 +1347,7 @@ function renderDashboardTab(b){
         <tbody>${payRows.length?payRows.map(q=>`
           <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
             <td style="font-weight:600">${esc(q.quoteNumber||q.title)}<br><span style="font-size:11px;color:var(--muted)">${esc(getProject(q.projectId)?.name||"")} · ${fmtDate(q.date)}</span></td>
-            <td style="font-size:12.5px">${esc(q.extra?.distributor||(q.kind==="jcs"?"Crew / job costs":"—"))}</td>
+            <td style="font-size:12.5px">${esc(q.extra?.distributor||"—")}</td>
             <td class="t-right num" style="font-weight:700">${fmtRp(poOutstanding(q))}${poPaidTotal(q)?`<br><span style="font-size:10.5px;color:var(--muted);font-weight:400">of ${fmtRp(quoteGrand(q))}</span>`:""}</td></tr>`).join("")
         :'<tr><td colspan="3"><div class="empty">No outstanding purchase orders 🎉</div></td></tr>'}</tbody></table></div>
     </div>
@@ -1454,13 +1454,13 @@ function renderDashboardTab(b){
     <div class="card">
       <div class="card-pad" style="padding-bottom:8px"><span class="eyebrow">Project profitability — quotation vs RAP vs actual PO spend</span></div>
       <div style="overflow-x:auto"><table class="grid" style="min-width:760px">
-        <thead><tr><th>Project</th><th class="t-right">Quotation</th><th class="t-right">Budget (RAP+JCS)</th><th class="t-right">Actual (PO+JCS)</th><th class="t-right">Est. margin</th><th class="t-right">Actual margin</th></tr></thead>
+        <thead><tr><th>Project</th><th class="t-right">Quotation</th><th class="t-right">Budget (RAP+JCS)</th><th class="t-right">Actual (PO)</th><th class="t-right">Est. margin</th><th class="t-right">Actual margin</th></tr></thead>
         <tbody>${profRows.length?profRows.map(x=>`
           <tr class="rowlink" onclick="go({view:'project',projectId:'${x.p.id}'})">
             <td style="font-weight:600">${esc(x.p.name)}</td>
             <td class="t-right num">${x.q?fmtRpShort(x.q):"—"}</td>
             <td class="t-right num" style="color:var(--amber)" title="RAP ${fmtRp(x.r)} + JCS ${fmtRp(x.j)}">${x.cost?fmtRpShort(x.cost):"—"}</td>
-            <td class="t-right num" title="PO ${fmtRp(x.o)} + JCS ${fmtRp(x.j)}">${x.act?fmtRpShort(x.act):"—"}</td>
+            <td class="t-right num">${x.act?fmtRpShort(x.act):"—"}</td>
             <td class="t-right num" style="color:${x.q-x.cost>=0?"var(--accent-dark)":"var(--red)"}">${(x.q&&x.cost)?fmtRpShort(x.q-x.cost):"—"}</td>
             <td class="t-right num" style="font-weight:700;color:${x.q-x.act>=0?"var(--accent-dark)":"var(--red)"}">${(x.q&&x.act)?fmtRpShort(x.q-x.act):"—"}</td></tr>`).join("")
         :'<tr><td colspan="6"><div class="empty">No financial documents yet in this company.</div></td></tr>'}</tbody></table></div>
@@ -1826,7 +1826,7 @@ function docRowActions(q,kind){
   return `${can(docPerm(q.kind))?`<button class="btn ghost small" title="Create a linked new revision (keeps this version as history)" onclick="event.stopPropagation();openRevision('${q.id}')">⎘ Rev</button>`:""}
     ${can(docPerm(q.kind))&&["quote","rap"].includes(q.kind||"quote")?`<button class="btn ghost small" title="Offer a parallel alternative (e.g. another brand) — counted once" onclick="event.stopPropagation();openAddOption('${q.id}')">⎇ Option</button>`:""}
     ${kind==="quote"&&can("rap")?`<button class="btn ghost small" title="Create RAP from this quotation" onclick="event.stopPropagation();deriveRAP('${q.id}')">→ RAP</button>`:""}
-    ${kind==="rap"&&can("po")?`<button class="btn ghost small" title="Create a purchase order from selected items" onclick="event.stopPropagation();openPOFromRAP('${q.id}')">→ PO</button>`:""}
+    ${["rap","jcs"].includes(kind)&&can("po")?`<button class="btn ghost small" title="${kind==="jcs"?"Create a PO to one person/partner from selected cost lines — one PO per person, each with its own payment schedule":"Create a purchase order from selected items"}" onclick="event.stopPropagation();openPOFromRAP('${q.id}')">→ PO</button>`:""}
     ${kind==="invoice"&&can("billing")?`<button class="btn ghost small" title="Create receipt for this invoice" onclick="event.stopPropagation();receiptFromInvoice('${q.id}')">→ Receipt</button>`:""}
     ${kind==="quote"&&can("billing")?`<button class="btn ghost small" title="Create sales order from this quotation" onclick="event.stopPropagation();doSOFromQuote('${q.id}')">→ SO</button>`:""}
     ${kind==="so"&&can("billing")?`<button class="btn ghost small" title="Create invoice from this sales order" onclick="event.stopPropagation();invoiceFromSO('${q.id}')">→ Invoice</button>`:""}
@@ -1885,13 +1885,12 @@ function docTable(list,kind,emptyMsg){
       </tr>`).join(""):`<tr><td colspan="7"><div class="empty">${emptyMsg}</div></td></tr>`}
     </tbody></table></div>`;
   return `<div class="card" style="margin-bottom:22px"><table class="grid">
-    <thead><tr><th>${KIND_LABEL[kind]} no.</th><th>Title</th><th>Date</th>${kind==="po"?"<th>Distributor</th><th>Paid</th>":kind==="jcs"?"<th>Paid</th>":""}${kind!=="receipt"?'<th>PPN 11%</th><th class="t-right">Subtotal</th><th class="t-right">Discount</th>':"<th>Received from</th>"}<th class="t-right">${kind==="receipt"?"Amount":"Grand total"}</th><th></th></tr></thead>
+    <thead><tr><th>${KIND_LABEL[kind]} no.</th><th>Title</th><th>Date</th>${kind==="po"?"<th>Distributor</th><th>Paid</th>":""}${kind!=="receipt"?'<th>PPN 11%</th><th class="t-right">Subtotal</th><th class="t-right">Discount</th>':"<th>Received from</th>"}<th class="t-right">${kind==="receipt"?"Amount":"Grand total"}</th><th></th></tr></thead>
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
         <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
-        ${kind==="jcs"?`<td>${poFullyPaid(q)?`<span class="pill">paid</span>`:poPaidTotal(q)>0?`<span class="pill amber" title="${fmtRp(poPaidTotal(q))} of ${fmtRp(quoteGrand(q))}">partial · ${fmtRp(poOutstanding(q))} left</span>`:'<span class="pill amber">unpaid</span>'}</td>`:""}
         ${kind==="po"?`<td>${esc(q.extra?.distributor||"—")}</td><td>${poFullyPaid(q)?`<span class="pill" title="${poPayments(q).length} payment(s)">paid ${fmtDate(poPayments(q).slice(-1)[0]?.date)}</span>`
         :poPaidTotal(q)>0?`<span class="pill amber" title="${fmtRp(poPaidTotal(q))} of ${fmtRp(quoteGrand(q))}">partial · ${fmtRp(poOutstanding(q))} left</span>`
         :'<span class="pill amber">unpaid</span>'}</td>`:""}
@@ -1982,9 +1981,7 @@ function renderProjectDocs(b,p){
         ${can("quote")&&showQ.length?`<div class="line" style="font-weight:600;border-top:1px solid var(--line)"><span>Total quotations</span><span class="num">${fmtRp(gq)}</span></div>`:""}
         ${can("rap")&&showR.length?`<div class="line" style="color:var(--amber)"><span>Total RAP (budget)</span><span class="num">${fmtRp(gr)}</span></div>`:""}
         ${can("rap")&&showJ.length?`<div class="line" style="color:var(--amber)"><span>Total job cost</span><span class="num">${fmtRp(gj)}</span></div>`:""}
-        ${(()=>{const paid=countable(jcss).reduce((a,x)=>a+poPaidTotal(x),0); if(!paid) return "";
-          const out=gj-paid;
-          return `<div class="line" style="font-size:12.5px;color:var(--muted)"><span>— job costs paid / outstanding</span><span class="num">${fmtRp(paid)} / <span style="color:${out>0?"var(--red)":"var(--accent-dark)"}">${fmtRp(Math.max(0,out))}</span></span></div>`;})()}
+
         ${(can("quote")&&can("rap")&&quotes.length&&(raps.length||jcss.length))?`<div class="line grand"><span>Est. margin (quote − costs)</span><span class="num" style="color:${gq-gr-gj>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(gq-gr-gj)}</span></div>`:""}
       </div>
     </div>`:""}`;
@@ -2247,7 +2244,9 @@ function openPOFromRAP(rapId){
     rows+=`<tr style="background:#F3F6F3"><td colspan="5" style="font-weight:700;font-size:12px">${esc(sec.name).toUpperCase()}
       <label style="font-weight:400;margin-left:10px;font-size:11.5px;color:var(--muted)"><input type="checkbox" onchange="document.querySelectorAll('.poi-s${si}').forEach(c=>c.checked=this.checked)"> select all</label></td></tr>`;
     sec.items.forEach((it,ii)=>{ idx++;
-      const d=getDistributor((DB.equipment.find(x=>x.brand.trim().toLowerCase()===String(it.brand).trim().toLowerCase()&&x.series.trim().toLowerCase()===String(it.series).trim().toLowerCase())||{}).distributor);
+      const d=rap.kind==="jcs"
+        ? DB.distributors.find(x=>x.name.trim().toLowerCase()===String(it.series).trim().toLowerCase())
+        : getDistributor((DB.equipment.find(x=>x.brand.trim().toLowerCase()===String(it.brand).trim().toLowerCase()&&x.series.trim().toLowerCase()===String(it.series).trim().toLowerCase())||{}).distributor);
       rows+=`<tr>
         <td><input type="checkbox" class="poitem poi-s${si}" data-si="${si}" data-ii="${ii}"></td>
         <td style="font-weight:600;white-space:nowrap">${esc(it.brand)} ${esc(it.series)}</td>
@@ -2257,12 +2256,13 @@ function openPOFromRAP(rapId){
     });
   });
   openModal("Create purchase order — select items from “"+esc(rap.title||rap.quoteNumber||"RAP")+"”",`
-    <div class="field"><label>Distributor / store (recipient of the PO)</label>
+    ${rap.kind==="jcs"?`<p style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Pick the lines for <strong>one person or partner</strong> and choose them as recipient — each person gets their own PO with its own payment schedule (full, DP 50%, after event…). Repeat per person.</p>`:""}
+    <div class="field"><label>${rap.kind==="jcs"?"Recipient (crew member / partner)":"Distributor / store (recipient of the PO)"}</label>
       <select id="po_dist">
         <option value="">— choose distributor —</option>
         ${DB.distributors.filter(d=>visibleTo(d,docCompanyId(rap))).map(d=>`<option value="${esc(d.name)}">${esc(d.name)}</option>`).join("")}
       </select>
-      <span style="font-size:11.5px;color:var(--muted)">Tip: the last column shows each item's distributor from the equipment database. Create one PO per distributor.</span></div>
+      <span style="font-size:11.5px;color:var(--muted)">${rap.kind==="jcs"?"Tip: the last column shows the partner matched from each line — tick that person's lines only.":"Tip: the last column shows each item's distributor from the equipment database. Create one PO per distributor."}</span></div>
     <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:8px"><input type="checkbox" id="po_merge"> Merge all sections into one list (no section headers on the PO)</label>
     <div style="max-height:44vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px">
       <table class="grid"><tbody>${rows}</tbody></table></div>`,
@@ -2283,11 +2283,17 @@ async function doPOFromRAP(rapId){
   closeModal();
   if(merge&&sections.length){ sections.splice(0,sections.length,{name:"Order Items",items:sections.flatMap(x=>x.items)}); }
   const q={id:uid(),projectId:rap.projectId,quoteNumber:"",title:"PO — "+(dist||"order")+" ("+(rap.quoteNumber||rap.title)+")",
-    date:todayISO(),tax:true,kind:"po",discount:{type:"percent",value:0},sections,notes:"",
+    date:todayISO(),tax:rap.kind!=="jcs",kind:"po",discount:{type:"percent",value:0},sections,notes:"",
     extra:{distributor:dist,shipTo:"",refRAP:rap.quoteNumber||rap.title}};
   DB.quotations.push(q);
+  const proj=getProject(rap.projectId);
+  let modMsg="";
+  if(proj&&!moduleOn(proj,"po")){   // service/rental projects hide the PO tab by default
+    proj.modules={po:true,sj:moduleOn(proj,"sj"),ba:moduleOn(proj,"ba")};
+    modMsg=" · PO module enabled for this project";
+  }
   route.ptab="po";
-  await persist(saveQuotes,"PO created with "+picked.length+" item(s)");
+  await persist(async()=>{await saveQuotes(); if(modMsg) await saveProjects();},"PO created with "+picked.length+" item(s)"+modMsg);
   go({view:"quote",quoteId:q.id});
 }
 function pickQuoteForSO(pid){
@@ -2677,7 +2683,7 @@ function renderQuote(v,q,p){
         <div class="field"><label>Ship to / delivery address</label><input value="${esc(q.extra?.shipTo||"")}" placeholder="e.g. project site or warehouse" onchange="exSet('${q.id}','shipTo',this.value)"></div>
       </div>
       ${poPayPanel(q)}`:""}
-      ${q.kind==="jcs"?poPayPanel(q):""}
+
       <div class="sub" style="color:var(--muted);font-size:12px">Header on the PDF will show: export date · project “${esc(p.name)}” · ${esc(p.location||"no location")} · the number above · issuer ${esc(projCompany(p).name)}.</div>
     </div>
 
