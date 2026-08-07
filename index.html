@@ -598,7 +598,7 @@ const isEngineerOnly=()=>!!CURRENT_USER&&CURRENT_USER.roles.includes("engineer")
   &&!["admin","adminproject","finance","purchasing"].some(r=>CURRENT_USER.roles.includes(r));
 const canSeeProject=p=>allowedCompanyIds().includes(p.companyId||DB.companies[0]?.id)
   &&(!isEngineerOnly()||(p.engineers||[]).includes(CURRENT_USER.id));
-const docPerm=k=>({quote:"quote",rap:"rap",so:"billing",invoice:"billing",receipt:"billing",po:"po",sj:"sj",mos:"ba",bap:"ba",bast:"ba"}[k||"quote"]);
+const docPerm=k=>({quote:"quote",rap:"rap",jcs:"rap",so:"billing",invoice:"billing",receipt:"billing",po:"po",sj:"sj",mos:"ba",bap:"ba",bast:"ba"}[k||"quote"]);
 /* company-scoped catalogue: empty companies list = visible to ALL (legacy rows) */
 const visibleTo=(rec,cid)=>!(rec.companies&&rec.companies.length)||rec.companies.includes(cid);
 const costOf=(e,cid)=>{const v=Number(e.costs?.[cid]); return v>0?v:(Number(e.cost)||0);};
@@ -631,7 +631,7 @@ const moduleOn=(p,k)=>(p?.modules&&k in p.modules)?!!p.modules[k]:PTYPE[projType
 const PARTNER_TYPES={distributor:"Distributor",crew:"Crew / Operator",subrental:"Sub-rental",subcon:"Subcontractor",transport:"Transport"};
 const partnerTypePills=d=>(d.types||[]).map(t=>`<span class="pill" style="font-size:10.5px">${esc(PARTNER_TYPES[t]||t)}</span>`).join(" ");
 const statusPill=st=>{const x=PSTATUS[st]||PSTATUS.onquote;return `<span class="pill" style="background:${x.bg};color:${x.fg}">${x.label}</span>`;};
-const KIND_LABEL={quote:"Quotation",rap:"RAP",so:"Sales Order",invoice:"Invoice",receipt:"Receipt",po:"Purchase Order",sj:"Surat Jalan",mos:"Material on Site",bap:"BA Progress",bast:"BAST"};
+const KIND_LABEL={quote:"Quotation",rap:"RAP",jcs:"Job Cost Sheet",so:"Sales Order",invoice:"Invoice",receipt:"Receipt",po:"Purchase Order",sj:"Surat Jalan",mos:"Material on Site",bap:"BA Progress",bast:"BAST"};
 function terbilang(n){
   n=Math.floor(Math.abs(Number(n)||0));
   const a=["","satu","dua","tiga","empat","lima","enam","tujuh","delapan","sembilan","sepuluh","sebelas"];
@@ -1284,8 +1284,9 @@ function renderDashboardTab(b){
   // profitability per project
   const profRows=projs.map(p=>{
     const g=k=>docs(k).filter(q=>q.projectId===p.id).reduce((x,q)=>x+quoteGrand(q),0);
-    return {p,q:g("quote"),r:g("rap"),o:g("po")};
-  }).filter(x=>x.q||x.r||x.o).sort((a,b)=>b.q-a.q);
+    const j=g("jcs");
+    return {p,q:g("quote"),r:g("rap"),j,o:g("po"),cost:g("rap")+j,act:g("po")+j};
+  }).filter(x=>x.q||x.cost||x.o).sort((a,b)=>b.q-a.q);
   b.innerHTML=`
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
       <span class="eyebrow">Financials of <strong>${esc(co?.name||"—")}</strong> · ${projs.length} project${projs.length===1?"":"s"}</span>
@@ -1452,15 +1453,15 @@ function renderDashboardTab(b){
     <div class="card">
       <div class="card-pad" style="padding-bottom:8px"><span class="eyebrow">Project profitability — quotation vs RAP vs actual PO spend</span></div>
       <div style="overflow-x:auto"><table class="grid" style="min-width:760px">
-        <thead><tr><th>Project</th><th class="t-right">Quotation</th><th class="t-right">RAP (budget)</th><th class="t-right">PO actual</th><th class="t-right">Est. margin (Q−RAP)</th><th class="t-right">Actual margin (Q−PO)</th></tr></thead>
+        <thead><tr><th>Project</th><th class="t-right">Quotation</th><th class="t-right">Budget (RAP+JCS)</th><th class="t-right">Actual (PO+JCS)</th><th class="t-right">Est. margin</th><th class="t-right">Actual margin</th></tr></thead>
         <tbody>${profRows.length?profRows.map(x=>`
           <tr class="rowlink" onclick="go({view:'project',projectId:'${x.p.id}'})">
             <td style="font-weight:600">${esc(x.p.name)}</td>
             <td class="t-right num">${x.q?fmtRpShort(x.q):"—"}</td>
-            <td class="t-right num" style="color:var(--amber)">${x.r?fmtRpShort(x.r):"—"}</td>
-            <td class="t-right num">${x.o?fmtRpShort(x.o):"—"}</td>
-            <td class="t-right num" style="color:${x.q-x.r>=0?"var(--accent-dark)":"var(--red)"}">${(x.q&&x.r)?fmtRpShort(x.q-x.r):"—"}</td>
-            <td class="t-right num" style="font-weight:700;color:${x.q-x.o>=0?"var(--accent-dark)":"var(--red)"}">${(x.q&&x.o)?fmtRpShort(x.q-x.o):"—"}</td></tr>`).join("")
+            <td class="t-right num" style="color:var(--amber)" title="RAP ${fmtRp(x.r)} + JCS ${fmtRp(x.j)}">${x.cost?fmtRpShort(x.cost):"—"}</td>
+            <td class="t-right num" title="PO ${fmtRp(x.o)} + JCS ${fmtRp(x.j)}">${x.act?fmtRpShort(x.act):"—"}</td>
+            <td class="t-right num" style="color:${x.q-x.cost>=0?"var(--accent-dark)":"var(--red)"}">${(x.q&&x.cost)?fmtRpShort(x.q-x.cost):"—"}</td>
+            <td class="t-right num" style="font-weight:700;color:${x.q-x.act>=0?"var(--accent-dark)":"var(--red)"}">${(x.q&&x.act)?fmtRpShort(x.q-x.act):"—"}</td></tr>`).join("")
         :'<tr><td colspan="6"><div class="empty">No financial documents yet in this company.</div></td></tr>'}</tbody></table></div>
     </div>
     <p style="font-size:11.5px;color:var(--muted);margin-top:10px">Superseded revisions and non-primary alternative options are excluded — only the latest revision of each document counts. Hover any figure for the exact amount. Cash in = receipts by receipt date · cash out = POs by payment date · receivables = invoiced − received per project · actual margin compares quotation value to committed PO spend.</p>`;
@@ -1806,7 +1807,7 @@ function renderProject(v,p){
       </div>
     </div>
     <div class="tabs">
-      ${tabsAllowed.docs?`<button class="tab ${ptab==="docs"?"active":""}" onclick="route.ptab='docs';render()">${can("quote")&&can("rap")?"Quotations & RAP":can("quote")?"Quotations":"RAP"}</button>`:""}
+      ${tabsAllowed.docs?`<button class="tab ${ptab==="docs"?"active":""}" onclick="route.ptab='docs';render()">${can("quote")&&can("rap")?"Quotations & Costs":can("quote")?"Quotations":"Costs"}</button>`:""}
       ${tabsAllowed.billing?`<button class="tab ${ptab==="billing"?"active":""}" onclick="route.ptab='billing';render()">SO · Invoices · Receipts</button>`:""}
       ${tabsAllowed.po?`<button class="tab ${ptab==="po"?"active":""}" onclick="route.ptab='po';render()">Purchase Orders</button>`:""}
       ${tabsAllowed.sj?`<button class="tab ${ptab==="sj"?"active":""}" onclick="route.ptab='sj';render()">Surat Jalan</button>`:""}
@@ -1905,10 +1906,11 @@ function docTable(list,kind,emptyMsg){
     </tbody></table></div>`;
 }
 function renderProjectDocs(b,p){
-  const quotes=kindQuotes(p.id,"quote"), raps=kindQuotes(p.id,"rap");
-  const showQ=notSuperseded(quotes), showR=notSuperseded(raps);          // options stay visible
+  const quotes=kindQuotes(p.id,"quote"), raps=kindQuotes(p.id,"rap"), jcss=kindQuotes(p.id,"jcs");
+  const showQ=notSuperseded(quotes), showR=notSuperseded(raps), showJ=notSuperseded(jcss);
   const gq=countable(quotes).reduce((a,q)=>a+quoteGrand(q),0),           // only the primary counts
-        gr=countable(raps).reduce((a,q)=>a+quoteGrand(q),0);
+        gr=countable(raps).reduce((a,q)=>a+quoteGrand(q),0),
+        gj=countable(jcss).reduce((a,q)=>a+quoteGrand(q),0);
   const exSet=excludedFromTotals();
   b.innerHTML=`
     ${can("quote")?`
@@ -1922,7 +1924,12 @@ function renderProjectDocs(b,p){
       <span class="eyebrow" style="color:var(--amber)">RAP / Project budget estimation (internal)</span>
       <button class="btn dark small" onclick="newQuote('${p.id}','rap')">+ New RAP</button>
     </div>
-    ${docTable(raps,"rap","Create one from scratch, or use “→ RAP” on a quotation to derive it with budget prices.")}`:""}
+    ${docTable(raps,"rap","Create one from scratch, or use “→ RAP” on a quotation to derive it with budget prices.")}
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="eyebrow" style="color:var(--amber)">Job cost sheet (internal) — crew · transport · sub-rental</span>
+      <button class="btn dark small" onclick="openJCS('${p.id}')">+ Job cost sheet</button>
+    </div>
+    ${docTable(jcss,"jcs","The cost plan for rental & service work — crew day rates, transport, sub-rented gear. Edit to actual at project close.")}`:""}
 
     ${can("manage")?`
     <div class="card card-pad" style="margin-bottom:22px">
@@ -1972,7 +1979,8 @@ function renderProjectDocs(b,p){
         ${can("quote")?showQ.map(q=>{const off=exSet.has(q.id);return `<div class="line" ${off?'style="color:var(--muted)"':""}><span>${esc(q.quoteNumber||q.title||"Quotation")}${optBadge(q)}${off?" <span style='font-size:11px'>not counted</span>":""}</span><span class="num">${fmtRp(quoteGrand(q))}</span></div>`;}).join(""):""}
         ${can("quote")&&showQ.length?`<div class="line" style="font-weight:600;border-top:1px solid var(--line)"><span>Total quotations</span><span class="num">${fmtRp(gq)}</span></div>`:""}
         ${can("rap")&&showR.length?`<div class="line" style="color:var(--amber)"><span>Total RAP (budget)</span><span class="num">${fmtRp(gr)}</span></div>`:""}
-        ${(can("quote")&&can("rap")&&quotes.length&&raps.length)?`<div class="line grand"><span>Est. margin (quote − RAP)</span><span class="num" style="color:${gq-gr>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(gq-gr)}</span></div>`:""}
+        ${can("rap")&&showJ.length?`<div class="line" style="color:var(--amber)"><span>Total job cost</span><span class="num">${fmtRp(gj)}</span></div>`:""}
+        ${(can("quote")&&can("rap")&&quotes.length&&(raps.length||jcss.length))?`<div class="line grand"><span>Est. margin (quote − costs)</span><span class="num" style="color:${gq-gr-gj>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(gq-gr-gj)}</span></div>`:""}
       </div>
     </div>`:""}`;
 }
@@ -2463,6 +2471,77 @@ function optPanelHTML(q){
     <div style="margin-top:9px;font-size:12px;color:var(--muted)">All options stay live and can be sent to the client. Only the primary one is added to the pipeline, project totals and dashboard — the client will buy one of them. Creating a Sales Order from an option makes it primary automatically.</div>
   </div>`;
 }
+/* ---------- job cost sheet: creation + crew picker ---------- */
+function openJCS(pid){
+  const quotes=liveOnly(kindQuotes(pid,"quote"));
+  openModal("New job cost sheet",`
+    <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+      Internal cost plan for crew, transport, sub-rental and other job costs — the RAP equivalent for
+      rental &amp; service work. At project close you can edit it to actual figures, exactly like your RAP workflow.</p>
+    <div class="field"><label>Start from</label>
+      <select id="jcs_mode" onchange="document.getElementById('jcs_srcRow').style.display=this.value==='pct'?'block':'none';">
+        <option value="tpl" selected>Template sections (Crew · Transport · Sub-rental · Other)</option>
+        <option value="pct">Copy a quotation's lines at a % (rough cost estimate)</option>
+      </select></div>
+    <div id="jcs_srcRow" style="display:none">
+      <div class="field-row c2">
+        <div class="field"><label>Source quotation</label>
+          <select id="jcs_src">${quotes.map(x=>`<option value="${x.id}">${esc(x.quoteNumber||x.title)} — ${fmtRp(quoteGrand(x))}${revOpt(x)}</option>`).join("")}</select></div>
+        <div class="field"><label>Cost as % of selling price</label><input id="jcs_pct" type="number" min="1" max="100" value="60"></div>
+      </div>
+    </div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="doJCS('${pid}')">Create</button>`);
+}
+async function doJCS(pid){
+  const mode=$("#jcs_mode").value;
+  const n=kindQuotes(pid,"jcs").length+1;
+  let sections, title="Job Cost "+n;
+  if(mode==="pct"){
+    const src=getQuote($("#jcs_src").value), pct=(Number($("#jcs_pct").value)||60)/100;
+    if(!src){ closeModal(); return alert("No quotation to copy from."); }
+    sections=JSON.parse(JSON.stringify(src.sections));
+    sections.forEach(sec=>sec.items.forEach(it=>it.price=Math.round((Number(it.price)||0)*pct)));
+    title="Job Cost — "+(src.quoteNumber||src.title);
+  }else{
+    sections=[{name:"Crew",items:[]},{name:"Transport",items:[]},{name:"Sub-rental",items:[]},{name:"Other Costs",items:[]}];
+  }
+  closeModal();
+  const q={id:uid(),projectId:pid,quoteNumber:"",title,date:todayISO(),tax:false,kind:"jcs",
+    discount:{type:"percent",value:0},sections,notes:"",extra:{}};
+  DB.quotations.push(q);
+  await persist(saveQuotes,"Job cost sheet created");
+  go({view:"quote",quoteId:q.id});
+}
+/* crew picker: partners with a service type, day rate prefilled */
+let crewCtx={qid:null,si:0};
+function openCrewPicker(qid,si){
+  if(finalGuard(qid))return;
+  crewCtx={qid,si};
+  const q=getQuote(qid), cid=docCompanyId(q);
+  const list=DB.distributors.filter(d=>visibleTo(d,cid)&&(d.types||[]).some(t=>["crew","transport","subrental","subcon"].includes(t)));
+  openModal("Add crew / partner cost",`
+    ${list.length?`<table class="grid">
+      <thead><tr><th>Partner</th><th>Type</th><th>Role</th><th class="t-right">Day rate</th><th></th></tr></thead>
+      <tbody>${list.map(d=>`<tr>
+        <td style="font-weight:600">${esc(d.name)}</td>
+        <td>${partnerTypePills(d)}</td>
+        <td style="font-size:12.5px">${esc(d.role||"—")}</td>
+        <td class="t-right num">${d.dayRate?fmtRp(d.dayRate):"—"}</td>
+        <td class="t-right"><button class="btn small primary" onclick="pickCrew('${d.id}')">Add</button></td></tr>`).join("")}
+      </tbody></table>`
+    :`<div class="empty">No crew / transport / sub-rental / subcon partners yet.<br>Tag them with a type in the Partners tab, and set crew day rates there.</div>`}`,
+    `<button class="btn" onclick="closeModal()">Close</button>`,true);
+}
+function pickCrew(did){
+  const d=DB.distributors.find(x=>x.id===did), {qid,si}=crewCtx;
+  if(finalGuard(qid))return;
+  const q=getQuote(qid);
+  const cat=(d.types||[]).includes("crew")?"Crew":(d.types||[]).includes("transport")?"Transport":(d.types||[]).includes("subrental")?"Sub-rental":"Subcon";
+  q.sections[si].items.push({brand:cat,series:d.name,description:d.role||"",qty:1,unit:"day",price:Number(d.dayRate)||0});
+  setDirty(true); toast(d.name+" added"+(d.dayRate?" @ "+fmtRp(d.dayRate)+"/day":" — set the rate on the line"));
+  render();
+}
 function openRevision(qid){
   const src=getQuote(qid), fam=revFamily(src);
   const next=Math.max(...fam.map(revNo))+1;
@@ -2535,7 +2614,7 @@ function renderQuote(v,q,p){
     <div class="page-head">
       <div>
         <button class="btn ghost small" onclick="go({view:'project',projectId:'${p.id}'})" style="margin-bottom:8px;padding-left:0">← ${esc(p.name)}</button>
-        <span class="eyebrow" ${q.kind==="rap"?'style="color:var(--amber)"':""}>${q.kind==="rap"?"RAP / Budget estimation (internal)":q.kind==="invoice"?"Invoice":q.kind==="po"?"Purchase order":q.kind==="sj"?"Surat jalan / delivery note":q.kind==="mos"?"Material on site approval":q.kind==="so"?"Sales order (confirmed)":"Quotation"} · ${esc(projCompany(p).name)}</span>
+        <span class="eyebrow" ${q.kind==="rap"?'style="color:var(--amber)"':""}>${q.kind==="rap"?"RAP / Budget estimation (internal)":q.kind==="invoice"?"Invoice":q.kind==="po"?"Purchase order":q.kind==="sj"?"Surat jalan / delivery note":q.kind==="mos"?"Material on site approval":q.kind==="so"?"Sales order (confirmed)":q.kind==="jcs"?"Job cost sheet (internal)":"Quotation"} · ${esc(projCompany(p).name)}</span>
         <h1><input class="inline-input" style="font-size:22px;font-weight:700;width:min(480px,80vw)" value="${esc(q.title)}" placeholder="Quotation title / option name" onchange="qSet('${q.id}','title',this.value)"></h1>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -2676,6 +2755,7 @@ function renderQuote(v,q,p){
 }
 function sectionHTML(q,s,si){
   const sj=["sj","mos"].includes(q.kind); // price-free document kinds
+  const jcs=q.kind==="jcs";
   return `<div class="section-block">
     <div class="section-head">
       <input value="${esc(s.name)}" placeholder="Section name (e.g. AV Control Room)" onchange="renameSection('${q.id}',${si},this.value)">
@@ -2685,7 +2765,7 @@ function sectionHTML(q,s,si){
     </div>
     <div class="section-body">
       <table class="grid boq-table">
-        <thead><tr><th style="width:26px">#</th><th style="width:120px">Brand</th><th style="width:140px">Series / Type</th><th>Description</th><th style="width:64px" class="t-right">Qty</th><th style="width:70px">Unit</th>${sj?"":'<th style="width:120px" class="t-right">Price</th><th style="width:120px" class="t-right">Total</th>'}<th style="width:96px"></th></tr></thead>
+        <thead><tr><th style="width:26px">#</th><th style="width:120px">${jcs?"Category":"Brand"}</th><th style="width:140px">${jcs?"Partner / person":"Series / Type"}</th><th>${jcs?"Detail":"Description"}</th><th style="width:64px" class="t-right">Qty</th><th style="width:70px">Unit</th>${sj?"":'<th style="width:120px" class="t-right">Price</th><th style="width:120px" class="t-right">Total</th>'}<th style="width:96px"></th></tr></thead>
         <tbody>
         ${s.items.map((it,ii)=>`
           <tr>
@@ -2707,6 +2787,7 @@ function sectionHTML(q,s,si){
         </tbody>
       </table>
       <div class="addrow-bar">
+        ${jcs?`<button class="btn small" onclick="openCrewPicker('${q.id}',${si})">+ Crew / partner</button>`:""}
         <button class="btn small" onclick="openPicker('${q.id}',${si})">+ From database</button>
         <button class="btn small" onclick="addManualItem('${q.id}',${si})">+ Manual line</button>
       </div>
@@ -2718,7 +2799,7 @@ function sectionHTML(q,s,si){
 function qSet(id,k,v){ if(finalGuard(id))return; getQuote(id)[k]=v; setDirty(true); render(); }
 function qSetSilent(id,k,v){ if(finalGuard(id))return; getQuote(id)[k]=v; setDirty(true); }
 /* ---------- smart document numbering (suggest, never force) ---------- */
-const NUM_PFX={quote:"Q",rap:"RAP",so:"SO",invoice:"INV",receipt:"KW",po:"PO",sj:"SJ",mos:"MOS",bap:"BAP",bast:"BAST"};
+const NUM_PFX={quote:"Q",rap:"RAP",jcs:"JCS",so:"SO",invoice:"INV",receipt:"KW",po:"PO",sj:"SJ",mos:"MOS",bap:"BAP",bast:"BAST"};
 function bumpNumber(numStr,srcDate){
   const now=new Date(), Y=String(now.getFullYear()), M=String(now.getMonth()+1).padStart(2,"0");
   const sY=(srcDate||"").slice(0,4), sM=(srcDate||"").slice(5,7);
@@ -3020,7 +3101,7 @@ function renameSection(id,si,v){ if(finalGuard(id))return; getQuote(id).sections
 function removeSection(id,si){ if(finalGuard(id))return; const q=getQuote(id); if(q.sections[si].items.length&&!confirm("Delete this section and its "+q.sections[si].items.length+" line(s)?"))return; q.sections.splice(si,1); setDirty(true); render(); }
 function moveSection(id,si,d){ if(finalGuard(id))return; const q=getQuote(id),j=si+d; if(j<0||j>=q.sections.length)return; [q.sections[si],q.sections[j]]=[q.sections[j],q.sections[si]]; setDirty(true); render(); }
 function itemSet(id,si,ii,k,v){ if(finalGuard(id))return; getQuote(id).sections[si].items[ii][k]=v; setDirty(true); render(); }
-function addManualItem(id,si){ if(finalGuard(id))return; getQuote(id).sections[si].items.push({brand:"",series:"",description:"",qty:1,unit:"unit",price:0}); setDirty(true); render(); }
+function addManualItem(id,si){ if(finalGuard(id))return; const q=getQuote(id); q.sections[si].items.push({brand:"",series:"",description:"",qty:1,unit:q.kind==="jcs"?"day":"unit",price:0}); setDirty(true); render(); }
 function removeItem(id,si,ii){ if(finalGuard(id))return; getQuote(id).sections[si].items.splice(ii,1); setDirty(true); render(); }
 function moveItem(id,si,ii,d){ if(finalGuard(id))return; const a=getQuote(id).sections[si].items,j=ii+d; if(j<0||j>=a.length)return; [a[ii],a[j]]=[a[j],a[ii]]; setDirty(true); render(); }
 
@@ -3368,7 +3449,7 @@ function renderPicker(){
   $("#pkRows").innerHTML=list.length?list.map(e=>`
     <tr><td style="font-weight:600;white-space:nowrap">${esc(e.brand)}</td><td style="white-space:nowrap">${esc(e.series)}</td>
     <td style="color:var(--muted);font-size:12.5px">${esc(e.description)}</td>
-    <td class="t-right num" style="white-space:nowrap">${isStale(e)?`<span title="Price last checked ${ageLabel(e)} — verify before quoting" style="color:var(--red);cursor:help">⚠ </span>`:""}${["rap","po"].includes(getQuote(pickerCtx.qid)?.kind)?(costOf(e,docCompanyId(getQuote(pickerCtx.qid)))?fmtRp(costOf(e,docCompanyId(getQuote(pickerCtx.qid)))):fmtRp(priceOf(e,docCompanyId(getQuote(pickerCtx.qid))))+" *"):fmtRp(priceOf(e,docCompanyId(getQuote(pickerCtx.qid))))}</td>
+    <td class="t-right num" style="white-space:nowrap">${isStale(e)?`<span title="Price last checked ${ageLabel(e)} — verify before quoting" style="color:var(--red);cursor:help">⚠ </span>`:""}${["rap","po","jcs"].includes(getQuote(pickerCtx.qid)?.kind)?(costOf(e,docCompanyId(getQuote(pickerCtx.qid)))?fmtRp(costOf(e,docCompanyId(getQuote(pickerCtx.qid)))):fmtRp(priceOf(e,docCompanyId(getQuote(pickerCtx.qid))))+" *"):fmtRp(priceOf(e,docCompanyId(getQuote(pickerCtx.qid))))}</td>
     <td class="t-right"><button class="btn small primary" onclick="pickItem('${e.id}')">Add</button></td></tr>`).join("")
   :`<tr><td style="padding:20px;text-align:center;color:var(--muted)">No matches in the equipment database.</td></tr>`;
 }
@@ -3378,9 +3459,9 @@ function pickItem(eid){
   const e=DB.equipment.find(x=>x.id===eid);
   const q=getQuote(qid);
   const cid=docCompanyId(q), co=costOf(e,cid), sp=priceOf(e,cid);
-  const price=(q.kind==="rap"||q.kind==="po")?(co>0?co:sp):sp;
+  const price=(q.kind==="rap"||q.kind==="po"||q.kind==="jcs")?(co>0?co:sp):sp;
   q.sections[si].items.push({brand:e.brand,series:e.series,description:e.description,qty:1,unit:e.unit||"unit",price});
-  setDirty(true); toast(e.brand+" "+e.series+" added"+((q.kind==="rap"||q.kind==="po")&&co>0?" (budget price)":""));
+  setDirty(true); toast(e.brand+" "+e.series+" added"+((q.kind==="rap"||q.kind==="po"||q.kind==="jcs")&&co>0?" (budget price)":""));
   render(); // re-render page behind modal
 }
 
@@ -3441,10 +3522,10 @@ function printQuote(qid){
     });
     rows+=`<tr class="subtotal"><td colspan="7" style="text-align:right">Subtotal — ${esc(s.name)}</td><td class="num-p" style="text-align:right">${fmtRp(sectionTotal(s))}</td></tr>`;
   });
-  const isRap=q.kind==="rap", isInv=q.kind==="invoice", isPO=q.kind==="po", isSJ=q.kind==="sj", isMOS=q.kind==="mos", isSO=q.kind==="so";
+  const isRap=q.kind==="rap"||q.kind==="jcs", isJCS=q.kind==="jcs", isInv=q.kind==="invoice", isPO=q.kind==="po", isSJ=q.kind==="sj", isMOS=q.kind==="mos", isSO=q.kind==="so";
   if(isSJ) return printSJ(q,p);
   if(isMOS) return printMOS(q,p);
-  const title=isRap?"PROJECT BUDGET (RAP)":isInv?"INVOICE":isPO?"PURCHASE ORDER":isSO?"SALES ORDER":"QUOTATION";
+  const title=isJCS?"JOB COST SHEET (INTERNAL)":isRap?"PROJECT BUDGET (RAP)":isInv?"INVOICE":isPO?"PURCHASE ORDER":isSO?"SALES ORDER":"QUOTATION";
   const dist=isPO?getDistributor(q.extra?.distributor):null;
   const meta=[["Project",p.name],["Location",p.location||"—"],
       [KIND_LABEL[q.kind||"quote"]+" no.",q.quoteNumber||"—"],["Title",q.title||"—"],
@@ -3687,7 +3768,7 @@ function printSummary(pid,scope){
   if(dirty) persist(saveProjects);
   const p=getProject(pid);
   const quotes=scope==="rap"?[]:notSuperseded(kindQuotes(pid,"quote"));
-  const raps=scope==="quote"?[]:notSuperseded(kindQuotes(pid,"rap"));
+  const raps=scope==="quote"?[]:notSuperseded([...kindQuotes(pid,"rap"),...kindQuotes(pid,"jcs")]);
   const exS=excludedFromTotals();
   const hasOptions=[...quotes,...raps].some(q=>optFamily(q).length>1);
   const tbl=(list,label)=>{
@@ -3735,7 +3816,7 @@ function quoteAOA(q,p){
   const isRap=q.kind==="rap", C=projCompany(p);
   const aoa=[
     [C.name],[C.tagline],[],
-    [isRap?"PROJECT BUDGET (RAP)":q.kind==="invoice"?"INVOICE":q.kind==="po"?"PURCHASE ORDER":q.kind==="so"?"SALES ORDER":"QUOTATION"],
+    [q.kind==="jcs"?"JOB COST SHEET (INTERNAL)":isRap?"PROJECT BUDGET (RAP)":q.kind==="invoice"?"INVOICE":q.kind==="po"?"PURCHASE ORDER":q.kind==="so"?"SALES ORDER":"QUOTATION"],
     ["Project",p.name],["Location",p.location||""],["Number",q.quoteNumber||""],
     ["Title",q.title||""],["Date",q.date||""],["Exported",todayISO()],
     ...(q.kind==="invoice"?[["Bill to",q.extra?.billTo||p.client||""]]:[]),
@@ -3770,7 +3851,7 @@ function exportSummaryXlsx(pid,scope){
   if(needXLSX()) return;
   const p=getProject(pid);
   const quotes=scope==="rap"?[]:notSuperseded(kindQuotes(pid,"quote"));
-  const raps=scope==="quote"?[]:notSuperseded(kindQuotes(pid,"rap"));
+  const raps=scope==="quote"?[]:notSuperseded([...kindQuotes(pid,"rap"),...kindQuotes(pid,"jcs")]);
   const exS=excludedFromTotals();
   const wb=XLSX.utils.book_new();
   const sumAOA=[[projCompany(p).name],[(scope==="quote"?"QUOTATION SUMMARY — ":scope==="rap"?"RAP SUMMARY (INTERNAL) — ":"PROJECT SUMMARY — ")+p.name],["Location",p.location||""],["Client",p.client||""],["Exported",todayISO()],[],
