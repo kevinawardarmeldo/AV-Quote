@@ -1134,6 +1134,56 @@ function openDiagnostics(){
      <button class="btn primary" onclick="closeModal()">Close</button>`,true);
 }
 
+/* ---------- bank account transaction drill-down ---------- */
+function openAcctTransactions(accId){
+  const co=DB.companies.find(c=>c.id===ACTIVE_COMPANY);
+  const acc=coAccounts(ACTIVE_COMPANY).find(a=>a.id===accId);
+  const title=accId==="_none"?"Transactions not assigned to an account":(acc?(acc.label||acc.bank)+" — "+acc.bank+" "+(acc.no||""):"Account");
+  const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY);
+  const pids=new Set(projs.map(p=>p.id));
+  const match=id=>accId==="_none"?!(id&&coAccounts(ACTIVE_COMPANY).some(a=>a.id===id)):id===accId;
+  const tx=[];
+  DB.quotations.filter(q=>pids.has(q.projectId)&&(q.kind||"quote")==="receipt").forEach(r=>{
+    if(!String(r.date||"").startsWith(dashYear)) return;
+    if(!match(r.extra?.toAccount)) return;
+    tx.push({date:r.date,dir:"in",amount:recCash(r),doc:r.quoteNumber||r.title||"Receipt",
+      who:r.extra?.recvFrom||getProject(r.projectId)?.client||"",proj:getProject(r.projectId)?.name||"",qid:r.id,
+      note:recDeductTotal(r)?("clears "+fmtRp(recSettled(r))):""});
+  });
+  DB.quotations.filter(q=>pids.has(q.projectId)&&(q.kind||"quote")==="po").forEach(o=>{
+    poPayments(o).forEach(p=>{
+      if(!String(p.date||"").startsWith(dashYear)) return;
+      if(!match(p.fromAccount)) return;
+      tx.push({date:p.date,dir:"out",amount:Number(p.amount)||0,doc:o.quoteNumber||o.title||"PO",
+        who:o.extra?.distributor||"",proj:getProject(o.projectId)?.name||"",qid:o.id,
+        note:p.label||""});
+    });
+  });
+  tx.sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const tin=tx.filter(t=>t.dir==="in").reduce((a,t)=>a+t.amount,0);
+  const tout=tx.filter(t=>t.dir==="out").reduce((a,t)=>a+t.amount,0);
+  openModal(title+" · "+dashYear,`
+    ${tx.length?`<div style="overflow-x:auto"><table class="grid" style="min-width:640px">
+      <thead><tr><th style="width:100px">Date</th><th style="width:56px"></th><th>Document</th><th>Counterparty</th><th class="t-right" style="width:140px">Amount</th></tr></thead>
+      <tbody>${tx.map(t=>`
+        <tr class="rowlink" onclick="closeModal();go({view:'quote',quoteId:'${t.qid}'})">
+          <td class="num" style="font-size:12.5px">${fmtDate(t.date)}</td>
+          <td>${t.dir==="in"?'<span class="pill">IN</span>':'<span class="pill amber">OUT</span>'}</td>
+          <td style="font-weight:600">${esc(t.doc)}<br><span style="font-size:11px;color:var(--muted)">${esc(t.proj)}${t.note?" · "+esc(t.note):""}</span></td>
+          <td style="font-size:12.5px">${esc(t.who||"—")}</td>
+          <td class="t-right num" style="font-weight:700;color:${t.dir==="in"?"var(--accent-dark)":"var(--amber)"}">${t.dir==="in"?"+":"−"} ${fmtRp(t.amount)}</td>
+        </tr>`).join("")}
+      </tbody></table></div>
+    <div style="display:flex;justify-content:flex-end;gap:22px;margin-top:10px;font-size:13px;border-top:1px solid var(--line);padding-top:8px">
+      <span>In <strong class="num" style="color:var(--accent-dark)">${fmtRp(tin)}</strong></span>
+      <span>Out <strong class="num" style="color:var(--amber)">${fmtRp(tout)}</strong></span>
+      <span>Net <strong class="num" style="color:${tin-tout>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(tin-tout)}</strong></span>
+    </div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:6px">Click a row to open the document. Cash amounts only — for receipts with withholding, the cleared invoice value is shown under the document.</p>`
+    :`<div class="empty">No transactions ${accId==="_none"?"without an account tag":"on this account"} in ${dashYear}.</div>`}`,
+    `<button class="btn primary" onclick="closeModal()">Close</button>`,true);
+}
+
 /* ================= FINANCIAL DASHBOARD ================= */
 let dashYear=new Date().getFullYear();
 const fmtRpShort=n=>{n=Number(n)||0;const a=Math.abs(n);
@@ -1330,11 +1380,11 @@ function renderDashboardTab(b){
           <div style="font-size:11.5px;color:var(--muted)">cash in from receipts · cash out from PO payments</div></div>
           <table class="grid"><thead><tr><th>Account</th><th class="t-right">In</th><th class="t-right">Out</th><th class="t-right">Net</th></tr></thead>
             <tbody>${accs.map(a=>{const v=mv[a.id]; if(!v.in&&!v.out)return "";
-              return `<tr><td style="font-weight:600">${esc(a.label||a.bank)}<br><span style="font-size:11px;color:var(--muted)">${esc(a.bank)} ${esc(a.no||"")}</span></td>
+              return `<tr class="rowlink" title="Click to see every transaction" onclick="openAcctTransactions('${a.id}')"><td style="font-weight:600">${esc(a.label||a.bank)}<br><span style="font-size:11px;color:var(--muted)">${esc(a.bank)} ${esc(a.no||"")}</span></td>
               <td class="t-right num" style="color:var(--accent-dark)">${fmtRpShort(v.in)}</td>
               <td class="t-right num" style="color:var(--amber)">${fmtRpShort(v.out)}</td>
               <td class="t-right num" style="font-weight:700;color:${v.in-v.out>=0?"var(--accent-dark)":"var(--red)"}">${fmtRpShort(v.in-v.out)}</td></tr>`;}).join("")}
-              ${(mv._none.in||mv._none.out)?`<tr><td style="color:var(--muted)">Not assigned to an account<br><span style="font-size:11px">tag them on receipts &amp; PO payments</span></td>
+              ${(mv._none.in||mv._none.out)?`<tr class="rowlink" title="Click to see every untagged transaction" onclick="openAcctTransactions('_none')"><td style="color:var(--muted)">Not assigned to an account<br><span style="font-size:11px">tag them on receipts &amp; PO payments</span></td>
                 <td class="t-right num">${fmtRpShort(mv._none.in)}</td><td class="t-right num">${fmtRpShort(mv._none.out)}</td>
                 <td class="t-right num">${fmtRpShort(mv._none.in-mv._none.out)}</td></tr>`:""}
             </tbody></table></div>`:""}
