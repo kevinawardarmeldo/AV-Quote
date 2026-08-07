@@ -1285,6 +1285,61 @@ function renderDashboardTab(b){
           Other deductions (bank fees) are costs, not credits.</div>
       </div>`;})()}
 
+    ${(()=>{
+      /* ---- withheld tax recap (from receipt deductions, by year) ---- */
+      const yearRecs=recs.filter(r=>String(r.date||"").startsWith(dashYear));
+      const taxRows={};
+      yearRecs.forEach(r=>recDeductions(r).forEach(d=>{
+        const key=(d.label||"Other deduction").trim()||"Other deduction";
+        (taxRows[key]=taxRows[key]||{amount:0,count:0});
+        taxRows[key].amount+=Number(d.amount)||0; taxRows[key].count++;
+      }));
+      const taxList=Object.entries(taxRows).sort((a,b)=>b[1].amount-a[1].amount);
+      const taxTotal=taxList.reduce((a,[,v])=>a+v.amount,0);
+      /* ---- per-client withheld (for bukti potong chasing) ---- */
+      const byClient={};
+      yearRecs.forEach(r=>{const t=recDeductTotal(r); if(!t)return;
+        const nm=getProject(r.projectId)?.client||"—"; byClient[nm]=(byClient[nm]||0)+t;});
+      const clientList=Object.entries(byClient).sort((a,b)=>b[1]-a[1]);
+      /* ---- bank account movement ---- */
+      const accs=coAccounts(ACTIVE_COMPANY);
+      const mv={}; accs.forEach(a=>mv[a.id]={in:0,out:0});
+      mv["_none"]={in:0,out:0};
+      recs.forEach(r=>{ if(!String(r.date||"").startsWith(dashYear))return;
+        const k=(r.extra?.toAccount&&mv[r.extra.toAccount])?r.extra.toAccount:"_none";
+        mv[k].in+=recCash(r); });
+      pos.forEach(o=>poPayments(o).forEach(p=>{ if(!String(p.date||"").startsWith(dashYear))return;
+        const k=(p.fromAccount&&mv[p.fromAccount])?p.fromAccount:"_none";
+        mv[k].out+=Number(p.amount)||0; }));
+      const anyMove=Object.values(mv).some(v=>v.in||v.out);
+      if(!taxTotal&&!anyMove) return "";
+      return `<div style="display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-bottom:20px">
+        ${taxTotal?`<div class="card"><div class="card-pad" style="padding-bottom:8px">
+          <span class="eyebrow" style="color:var(--amber)">Tax &amp; fees withheld by clients — ${dashYear}</span>
+          <div class="num" style="font-size:20px;font-weight:800;margin-top:4px" title="${fmtRp(taxTotal)}">${fmtRpShort(taxTotal)}</div>
+          <div style="font-size:11.5px;color:var(--muted)">already paid to the tax office on your behalf — claim as credit with each bukti potong</div></div>
+          <table class="grid"><thead><tr><th>Type</th><th class="t-right">Receipts</th><th class="t-right">Amount</th></tr></thead>
+            <tbody>${taxList.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="t-right num">${v.count}</td>
+              <td class="t-right num" style="font-weight:600">${fmtRp(v.amount)}</td></tr>`).join("")}
+              ${clientList.length?`<tr><td colspan="3" style="padding-top:10px"><span class="eyebrow">By client</span></td></tr>`:""}
+              ${clientList.map(([k,v])=>`<tr><td style="color:var(--muted)">${esc(k)}</td><td></td>
+                <td class="t-right num" style="color:var(--muted)">${fmtRp(v)}</td></tr>`).join("")}
+            </tbody></table></div>`:""}
+        ${anyMove?`<div class="card"><div class="card-pad" style="padding-bottom:8px">
+          <span class="eyebrow">Bank accounts — ${dashYear} movement</span>
+          <div style="font-size:11.5px;color:var(--muted)">cash in from receipts · cash out from PO payments</div></div>
+          <table class="grid"><thead><tr><th>Account</th><th class="t-right">In</th><th class="t-right">Out</th><th class="t-right">Net</th></tr></thead>
+            <tbody>${accs.map(a=>{const v=mv[a.id]; if(!v.in&&!v.out)return "";
+              return `<tr><td style="font-weight:600">${esc(a.label||a.bank)}<br><span style="font-size:11px;color:var(--muted)">${esc(a.bank)} ${esc(a.no||"")}</span></td>
+              <td class="t-right num" style="color:var(--accent-dark)">${fmtRpShort(v.in)}</td>
+              <td class="t-right num" style="color:var(--amber)">${fmtRpShort(v.out)}</td>
+              <td class="t-right num" style="font-weight:700;color:${v.in-v.out>=0?"var(--accent-dark)":"var(--red)"}">${fmtRpShort(v.in-v.out)}</td></tr>`;}).join("")}
+              ${(mv._none.in||mv._none.out)?`<tr><td style="color:var(--muted)">Not assigned to an account<br><span style="font-size:11px">tag them on receipts &amp; PO payments</span></td>
+                <td class="t-right num">${fmtRpShort(mv._none.in)}</td><td class="t-right num">${fmtRpShort(mv._none.out)}</td>
+                <td class="t-right num">${fmtRpShort(mv._none.in-mv._none.out)}</td></tr>`:""}
+            </tbody></table></div>`:""}
+      </div>`;})()}
+
     <div class="card">
       <div class="card-pad" style="padding-bottom:8px"><span class="eyebrow">Project profitability — quotation vs RAP vs actual PO spend</span></div>
       <div style="overflow-x:auto"><table class="grid" style="min-width:760px">
@@ -1433,7 +1488,7 @@ function renderCompaniesTab(b){
       <tr><td style="font-weight:600">${esc(c.name)}</td><td style="font-size:12.5px">${esc(c.tagline)}</td>
       <td style="font-size:12.5px;color:var(--muted);max-width:200px">${esc(c.address)}</td>
       <td style="font-size:12.5px;color:var(--muted)">${esc(c.contact)}</td>
-      <td style="font-size:12px;color:var(--muted);white-space:pre-wrap;max-width:220px">${esc(c.bank)}</td>
+      <td style="font-size:12px;color:var(--muted);white-space:pre-wrap;max-width:220px">${esc(c.bank)}${(c.accounts||[]).length?`<br><span style="color:var(--accent-dark)">${c.accounts.length} tracked account(s)</span>`:""}</td>
       <td class="t-right" style="white-space:nowrap">
         <button class="btn ghost small" onclick="openCompanyModal('${c.id}')">Edit</button>
         <button class="btn ghost small danger" onclick="deleteCompany('${c.id}')">Delete</button></td></tr>`).join("")}
@@ -1450,12 +1505,14 @@ function openCompanyModal(id){
     <div class="field"><label>Bank details (printed on invoices)</label><textarea id="m_cbank" rows="3" placeholder="Bank BCA — 123 456 7890&#10;a.n. PT Sinergi Anugrah Mandiri">${esc(c?.bank||"")}</textarea></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="saveCompanyModal('${id||""}')">${c?"Save changes":"Add company"}</button>`);
+  coAccRender();
   $("#m_cname").focus();
 }
 async function saveCompanyModal(id){
   const rec={name:$("#m_cname").value.trim(),tagline:$("#m_ctag").value.trim(),address:$("#m_caddr").value.trim(),
     contact:$("#m_ccontact").value.trim(),bank:$("#m_cbank").value};
   if(!rec.name) return alert("Company name is required.");
+  rec.accounts=COACC.filter(a=>a.bank||a.no);
   if(id){ Object.assign(DB.companies.find(x=>x.id===id),rec); } else DB.companies.unshift({id:uid(),...rec});
   closeModal(); render(); await persist(saveCompanies);
 }
@@ -2380,7 +2437,7 @@ function renderQuote(v,q,p){
           </select></div>
         <div class="field"><label>Ship to / delivery address</label><input value="${esc(q.extra?.shipTo||"")}" placeholder="e.g. project site or warehouse" onchange="exSet('${q.id}','shipTo',this.value)"></div>
       </div>
-      ${(()=>{const pays=poPayments(q), total=quoteGrand(q), paid=poPaidTotal(q), out=poOutstanding(q), full=poFullyPaid(q);
+      ${(()=>{const _poCo=projCompany(getProject(q.projectId)).id; const pays=poPayments(q), total=quoteGrand(q), paid=poPaidTotal(q), out=poOutstanding(q), full=poFullyPaid(q);
         const accs=getDistributor(q.extra?.distributor)?.bankAccounts||[];
         return `<div style="border:1px solid ${full?"var(--accent)":pays.length?"var(--amber)":"var(--line)"};border-radius:8px;padding:12px 14px;margin-bottom:12px;background:${full?"var(--accent-soft)":pays.length?"var(--amber-soft)":"#FBFCFB"}">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
@@ -2392,13 +2449,14 @@ function renderQuote(v,q,p){
           </div>
         </div>
         ${pays.length?`<div style="overflow-x:auto"><table class="grid" style="min-width:720px;background:#fff;border-radius:6px">
-          <thead><tr><th style="width:130px">Label</th><th style="width:130px">Date</th><th style="width:130px" class="t-right">Amount</th><th style="width:120px">Method</th><th>Paid to account</th><th style="width:34px"></th></tr></thead>
+          <thead><tr><th style="width:130px">Label</th><th style="width:130px">Date</th><th style="width:130px" class="t-right">Amount</th><th style="width:160px">Method / paid from</th><th>Paid to (vendor account)</th><th style="width:34px"></th></tr></thead>
           <tbody>${pays.map(p=>`<tr>
             <td><input class="inline-input" value="${esc(p.label||"")}" placeholder="DP 50%" onchange="poSetPay('${q.id}','${p.id}','label',this.value)"></td>
             <td><input class="inline-input" type="date" value="${esc(p.date||"")}" onchange="poSetPay('${q.id}','${p.id}','date',this.value)"></td>
             <td><input class="inline-input num" type="number" min="0" value="${Number(p.amount)||0}" onchange="poSetPay('${q.id}','${p.id}','amount',this.value)"></td>
             <td><select style="border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:12px" onchange="poSetPay('${q.id}','${p.id}','method',this.value)">
-              ${["Transfer","Cash","Cheque / Giro"].map(m=>`<option ${(p.method||"Transfer")===m?"selected":""}>${m}</option>`).join("")}</select></td>
+              ${["Transfer","Cash","Cheque / Giro"].map(m=>`<option ${(p.method||"Transfer")===m?"selected":""}>${m}</option>`).join("")}</select>
+              <div style="margin-top:3px">${acctSelectHTML(_poCo,p.fromAccount,`poSetPay('${q.id}','${p.id}','fromAccount',this.value)`,"width:100%;font-size:11px;padding:3px 5px;")}</div></td>
             <td>
               <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">
                 <input class="inline-input" style="width:80px" value="${esc(p.bank||"")}" placeholder="bank" onchange="poSetPay('${q.id}','${p.id}','bank',this.value)">
@@ -2901,6 +2959,8 @@ function renderReceipt(v,q,p){
             ${["Transfer","Cash","Cheque / Giro"].map(m=>`<option ${x.payMethod===m?"selected":""}>${m}</option>`).join("")}
           </select></div>
       </div>
+      <div class="field"><label>Received into (company bank account)</label>
+        ${acctSelectHTML(projCompany(p).id,x.toAccount,`exSet('${q.id}','toAccount',this.value)`,"width:100%;")}</div>
       <div style="border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:14px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
           <span class="eyebrow">Deductions withheld by the client (optional)</span>
