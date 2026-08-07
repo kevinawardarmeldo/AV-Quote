@@ -258,12 +258,13 @@ const SHEETS = {
   Distributors: ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies","Bank Accounts","Types","Role","Day Rate"],
   Companies:    ["ID","Name","Tagline","Address","Contact","Bank Details","Accounts"],
   Users:        ["ID","Email","Roles","Companies","Locked"],
-  Clients:      ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies"]
+  Clients:      ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies"],
+  Assets:       ["ID","Asset Code","Brand","Series/Type","Description","Category","Serial Number","Owner","Owner Note","Condition","Location","Purchase Date","Purchase Cost","Daily Rate","Replacement Value","Company ID","Notes","Equipment ID"]
 };
 
 /* ================= state ================= */
 let token=null, tokenExp=0, userEmail="", userPic="";
-let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[],distributors:[],companies:[],users:[],clients:[]};
+let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[],distributors:[],companies:[],users:[],clients:[],assets:[]};
 let route={view:"home",tab:"projects",ptab:"docs",projectId:null,quoteId:null,companyFilter:""};
 let dirty=false;
 
@@ -427,7 +428,7 @@ async function loadAll(){
       return {name:tabNames[i],rows:rows.length,bytes:new Blob([JSON.stringify(rows)]).size,maxCell,
               maxLabel:maxRow?String(maxRow[2]||maxRow[3]||maxRow[1]||maxRow[0]||""):""};
     })};
-  const [eq,pr,qu,nt,sp,di,co,us,cl]=res.valueRanges.map(v=>v.values||[]);
+  const [eq,pr,qu,nt,sp,di,co,us,cl,ast]=res.valueRanges.map(v=>v.values||[]);
   DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||"",distributor:r[9]||"",
     companies:(r[10]||"").split(",").filter(Boolean),costs:(()=>{try{return JSON.parse(r[11]||"{}")}catch(e){return {}}})(),
     prices:(()=>{try{return JSON.parse(r[12]||"{}")}catch(e){return {}}})()}));
@@ -451,6 +452,10 @@ async function loadAll(){
   DB.companies=(co||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",tagline:r[2]||"",address:r[3]||"",contact:r[4]||"",bank:r[5]||"",accounts:(()=>{try{return JSON.parse(r[6]||"[]")}catch(e){return []}})()}));
   DB.users=(us||[]).filter(r=>r[0]).map(r=>({id:r[0],email:r[1]||"",roles:(r[2]||"").split(",").filter(Boolean),companies:(r[3]||"").split(",").filter(Boolean),locked:r[4]==="TRUE"}));
   DB.clients=(cl||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",contact:r[2]||"",phone:r[3]||"",email:r[4]||"",address:r[5]||"",notes:r[6]||"",companies:(r[7]||"").split(",").filter(Boolean)}));
+  DB.assets=(ast||[]).filter(r=>r[0]).map(r=>({id:r[0],code:r[1]||"",brand:r[2]||"",series:r[3]||"",description:r[4]||"",category:r[5]||"",
+    serial:r[6]||"",owner:r[7]||"company",ownerNote:r[8]||"",condition:r[9]||"good",location:r[10]||"",
+    purchaseDate:r[11]||"",purchaseCost:Number(r[12])||0,dailyRate:Number(r[13])||0,replacement:Number(r[14])||0,
+    companyId:r[15]||"",notes:r[16]||"",equipmentId:r[17]||""}));
 }
 /* ---------------------------------------------------------------
    Concurrency-safe saving.
@@ -532,6 +537,7 @@ const saveDistributors=()=>saveTab("Distributors",DB.distributors.map(d=>[d.id,d
 const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.tagline,c.address,c.contact,c.bank,JSON.stringify(c.accounts||[])]));
 const saveUsers=()=>saveTab("Users",DB.users.map(u=>[u.id,u.email,u.roles.join(","),u.companies.join(","),u.locked?"TRUE":"FALSE"]));
 const saveClients=()=>saveTab("Clients",DB.clients.map(c=>[c.id,c.name,c.contact,c.phone,c.email,c.address,c.notes,(c.companies||[]).join(",")]));
+const saveAssets=()=>saveTab("Assets",DB.assets.map(a=>[a.id,a.code,a.brand,a.series,a.description,a.category,a.serial,a.owner,a.ownerNote,a.condition,a.location,a.purchaseDate,a.purchaseCost||0,a.dailyRate||0,a.replacement||0,a.companyId||"",a.notes||"",a.equipmentId||""]));
 async function persist(fn,msg){
   try{
     $("#saveState").textContent="saving…";
@@ -587,7 +593,7 @@ let ACTIVE_COMPANY=null; // company issuer chosen after login
 const ROLE_LABEL={admin:"Administrator",engineer:"Engineer",adminproject:"Admin Project",finance:"Finance",purchasing:"Purchasing"};
 const PERMS={
   equipment:["admin","purchasing"], distributors:["admin","purchasing"],
-  templates:["admin","adminproject"], companies:["admin"], users:["admin"], clients:["admin","adminproject"], dashboard:["admin","finance","purchasing"],
+  templates:["admin","adminproject"], companies:["admin"], users:["admin"], clients:["admin","adminproject"], dashboard:["admin","finance","purchasing"], assets:["admin","adminproject","purchasing"],
   quote:["admin","engineer","adminproject"], rap:["admin","adminproject","purchasing"],
   billing:["admin","finance"], po:["admin","purchasing"], sj:["admin","adminproject","purchasing"], ba:["admin","adminproject"], manage:["admin","adminproject"]
 };
@@ -628,6 +634,20 @@ const typePill=t=>{const x=PTYPE[t]||PTYPE.installation;return `<span class="pil
 const projType=p=>PTYPE[p?.ptype]?p.ptype:"installation";
 /* module on/off: explicit per-project override wins, else the type default */
 const moduleOn=(p,k)=>(p?.modules&&k in p.modules)?!!p.modules[k]:PTYPE[projType(p)].mods[k];
+const ACOND={
+  good:   {label:"Good",        fg:"#0A5C43",bg:"#E3F1EB"},
+  check:  {label:"Needs check", fg:"#B4720E",bg:"#F7EDDA"},
+  repair: {label:"In repair",   fg:"#B4720E",bg:"#F7EDDA"},
+  damaged:{label:"Damaged",     fg:"#B3382C",bg:"#F7E4E1"},
+  retired:{label:"Retired",     fg:"#FFFFFF",bg:"#8A948C"}
+};
+const AOWNER={
+  company: {label:"Company",          fg:"var(--accent-dark)",bg:"var(--accent-soft)"},
+  personal:{label:"Personal (lease)", fg:"#2C4A6E",bg:"#E2E9F3"},
+  other:   {label:"Other",            fg:"#5C665F",bg:"#EDF1EC"}
+};
+const condPill=c=>{const x=ACOND[c]||ACOND.good;return `<span class="pill" style="background:${x.bg};color:${x.fg}">${x.label}</span>`;};
+const ownerPill=a=>{const x=AOWNER[a.owner]||AOWNER.company;return `<span class="pill" style="background:${x.bg};color:${x.fg}" ${a.owner==="other"&&a.ownerNote?`title="${esc(a.ownerNote)}"`:""}>${x.label}</span>`;};
 const PARTNER_TYPES={distributor:"Distributor",crew:"Crew / Operator",subrental:"Sub-rental",subcon:"Subcontractor",transport:"Transport"};
 const partnerTypePills=d=>(d.types||[]).map(t=>`<span class="pill" style="font-size:10.5px">${esc(PARTNER_TYPES[t]||t)}</span>`).join(" ");
 const statusPill=st=>{const x=PSTATUS[st]||PSTATUS.onquote;return `<span class="pill" style="background:${x.bg};color:${x.fg}">${x.label}</span>`;};
@@ -702,7 +722,7 @@ function selectCompany(id){
 
 /* ================= HOME ================= */
 function renderHome(v){
-  const tabPerm={projects:null,equipment:"equipment",distributors:"distributors",templates:"templates",companies:"companies",users:"users",clients:"clients",dashboard:"dashboard"};
+  const tabPerm={projects:null,equipment:"equipment",distributors:"distributors",templates:"templates",companies:"companies",users:"users",clients:"clients",dashboard:"dashboard",assets:"assets"};
   if(tabPerm[route.tab]&&!can(tabPerm[route.tab])) route.tab="projects";
   const tab=route.tab;
   v.innerHTML=`
@@ -719,6 +739,7 @@ function renderHome(v){
          :tab==="companies"?`<button class="btn primary" onclick="openCompanyModal()">+ Add company</button>`
          :tab==="users"?`<button class="btn primary" onclick="openUserModal()">+ Add user</button>`
          :tab==="clients"?`<button class="btn primary" onclick="openClientModal()">+ Add client</button>`
+         :tab==="assets"?`<button class="btn primary" onclick="openAssetModal()">+ Add asset</button>`
          :`<button class="btn primary" onclick="openTemplateModal()">+ New template</button>`}
       </div>
     </div>
@@ -726,6 +747,7 @@ function renderHome(v){
       <button class="tab ${tab==="projects"?"active":""}" onclick="route.tab='projects';render()">Projects</button>
       ${can("dashboard")?`<button class="tab ${tab==="dashboard"?"active":""}" onclick="route.tab='dashboard';render()">📊 Dashboard</button>`:""}
       ${can("equipment")?`<button class="tab ${tab==="equipment"?"active":""}" onclick="route.tab='equipment';render()">Equipment</button>`:""}
+      ${can("assets")?`<button class="tab ${tab==="assets"?"active":""}" onclick="route.tab='assets';render()">Assets</button>`:""}
       ${can("clients")?`<button class="tab ${tab==="clients"?"active":""}" onclick="route.tab='clients';render()">Clients</button>`:""}
       ${can("distributors")?`<button class="tab ${tab==="distributors"?"active":""}" onclick="route.tab='distributors';render()">Partners</button>`:""}
       ${can("templates")?`<button class="tab ${tab==="templates"?"active":""}" onclick="route.tab='templates';render()">Note templates</button>`:""}
@@ -741,6 +763,7 @@ function renderHome(v){
   else if(tab==="users") renderUsersTab(b);
   else if(tab==="clients") renderClientsTab(b);
   else if(tab==="dashboard") renderDashboardTab(b);
+  else if(tab==="assets") renderAssetsTab(b);
   else renderTemplatesTab(b);
 }
 async function reloadData(){ try{ await loadAll(); lastSig=""; render(); toast("Data reloaded from Sheet"); }catch(e){ alert(e.message); } }
@@ -1466,6 +1489,157 @@ function renderDashboardTab(b){
         :'<tr><td colspan="6"><div class="empty">No financial documents yet in this company.</div></td></tr>'}</tbody></table></div>
     </div>
     <p style="font-size:11.5px;color:var(--muted);margin-top:10px">Superseded revisions and non-primary alternative options are excluded — only the latest revision of each document counts. Hover any figure for the exact amount. Cash in = receipts by receipt date · cash out = POs by payment date · receivables = invoiced − received per project · actual margin compares quotation value to committed PO spend.</p>`;
+}
+
+/* ================= ASSET REGISTER ================= */
+let assetCondFilter="", assetOwnerFilter="", assetSearch="";
+function renderAssetsTab(b){
+  const allCo=$("#astAllCo")?.checked;
+  const all=DB.assets.filter(a=>allCo&&isAdmin()||((a.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY));
+  const q=assetSearch.toLowerCase();
+  let list=all.filter(a=>!q||(a.code+" "+a.brand+" "+a.series+" "+a.description+" "+a.serial+" "+a.category+" "+a.location).toLowerCase().includes(q));
+  if(assetCondFilter) list=list.filter(a=>(a.condition||"good")===assetCondFilter);
+  if(assetOwnerFilter) list=list.filter(a=>(a.owner||"company")===assetOwnerFilter);
+  list=list.slice().sort((a,b)=>(a.brand+a.series+a.code).localeCompare(b.brand+b.series+b.code));
+  // fleet stats (active, non-retired)
+  const active=all.filter(a=>a.condition!=="retired");
+  const models=new Set(active.map(a=>(a.brand+"|"+a.series).toLowerCase())).size;
+  const cost=active.reduce((x,a)=>x+(a.purchaseCost||0),0);
+  const daily=active.reduce((x,a)=>x+(a.dailyRate||0),0);
+  const chip=(set,k,label,n,active2)=>`<button class="btn small" style="border-radius:99px;${active2?"background:var(--ink);color:#fff;border-color:var(--ink)":""}"
+    onclick="${set}='${k}';render()">${label}${n!==undefined?` <span class="num" style="opacity:.7">${n}</span>`:""}</button>`;
+  b.innerHTML=`
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      ${[["Units (active fleet)",active.length+" of "+all.length],["Models",models],
+         ["Fleet at purchase cost","Rp "+fmtRpShort(cost)],["Daily earning potential","Rp "+fmtRpShort(daily)]].map(([l,v])=>`
+        <div class="card card-pad" style="flex:1;min-width:150px"><div class="eyebrow">${l}</div>
+          <div class="num" style="font-size:19px;font-weight:800;margin-top:4px">${v}</div></div>`).join("")}
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <input placeholder="Search code, model, serial, location…" value="${esc(assetSearch)}"
+        oninput="assetSearch=this.value;render()" style="flex:1;min-width:220px;border:1px solid var(--line);border-radius:8px;padding:9px 12px">
+      ${isAdmin()?`<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:8px 10px">
+        <input type="checkbox" id="astAllCo" ${allCo?"checked":""} onchange="render()"> all companies</label>`:""}
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+      ${chip("assetOwnerFilter","","All owners",all.length,assetOwnerFilter==="")}
+      ${Object.entries(AOWNER).map(([k,v])=>{const n=all.filter(a=>(a.owner||"company")===k).length;return n?chip("assetOwnerFilter",k,v.label,n,assetOwnerFilter===k):"";}).join("")}
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+      ${chip("assetCondFilter","","All conditions",all.length,assetCondFilter==="")}
+      ${Object.entries(ACOND).map(([k,v])=>{const n=all.filter(a=>(a.condition||"good")===k).length;return n?chip("assetCondFilter",k,v.label,n,assetCondFilter===k):"";}).join("")}
+    </div>
+    ${list.length?`<div class="card" style="overflow-x:auto"><table class="grid" style="min-width:960px">
+      <thead><tr><th style="width:90px">Code</th><th>Model</th><th style="width:130px">Serial</th><th style="width:120px">Owner</th><th style="width:110px">Condition</th>
+        <th class="t-right" style="width:110px">Daily rate</th><th class="t-right" style="width:120px">Replacement</th><th style="width:130px">Location</th><th style="width:110px"></th></tr></thead>
+      <tbody>${list.map(a=>`
+        <tr class="rowlink" onclick="openAssetModal('${a.id}')">
+          <td class="num" style="font-weight:700">${esc(a.code||"—")}</td>
+          <td style="font-weight:600">${esc(a.brand)} ${esc(a.series)}<br><span style="font-size:11px;color:var(--muted)">${esc(a.category||"")}${a.description?" · "+esc(a.description):""}</span></td>
+          <td class="num" style="font-size:12px">${esc(a.serial||"—")}</td>
+          <td>${ownerPill(a)}</td>
+          <td>${condPill(a.condition)}</td>
+          <td class="t-right num">${a.dailyRate?fmtRp(a.dailyRate):"—"}</td>
+          <td class="t-right num" style="color:var(--muted)">${a.replacement?fmtRp(a.replacement):"—"}</td>
+          <td style="font-size:12px;color:var(--muted)">${esc(a.location||"—")}</td>
+          <td class="t-right" style="white-space:nowrap">
+            <button class="btn ghost small" onclick="event.stopPropagation();duplicateAsset('${a.id}')" title="Add another identical unit">⧉ +1</button>
+            <button class="btn ghost small danger" onclick="event.stopPropagation();deleteAsset('${a.id}')">✕</button></td>
+        </tr>`).join("")}
+      </tbody></table></div>`
+    :`<div class="card"><div class="empty"><span class="eyebrow">${all.length?"No assets match the filter":"No assets yet"}</span>${all.length?"":"Register every unit you own — speakers, mixers, mics, stands — with serial number, owner (company vs your personal lease gear) and rental rates. This becomes the base for bookings, dispatch and utilisation."}</div></div>`}`;
+}
+
+function nextAssetCode(){
+  const codes=DB.assets.filter(a=>(a.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY).map(a=>a.code).filter(Boolean);
+  let best=0;
+  codes.forEach(c=>{const m=String(c).match(/(\d+)\s*$/); if(m) best=Math.max(best,Number(m[1]));});
+  const pfx=(codes[0]||"").match(/^(.*?)(\d+)\s*$/);
+  return (pfx?pfx[1]:"AST-")+String(best+1).padStart(pfx?pfx[2].length:3,"0");
+}
+function openAssetModal(id){
+  const a=DB.assets.find(x=>x.id===id);
+  openModal(a?"Edit asset":"Add asset(s)",`
+    <div class="field-row c3">
+      <div class="field"><label>Asset code (label on the case)</label><input id="a_code" value="${esc(a?.code||nextAssetCode())}"></div>
+      <div class="field"><label>Category</label><input id="a_cat" value="${esc(a?.category||"")}" placeholder="e.g. Speaker" list="astCatList">
+        <datalist id="astCatList">${[...new Set(DB.assets.map(x=>x.category).filter(Boolean))].map(c=>`<option>${esc(c)}</option>`).join("")}</datalist></div>
+      ${a?"":`<div class="field"><label>How many units?</label><input id="a_qty" type="number" min="1" max="50" value="1"></div>`}
+    </div>
+    <div class="field-row c2">
+      <div class="field"><label>Brand</label><input id="a_brand" value="${esc(a?.brand||"")}" list="astEqList" oninput="astFromEq(this.value)"></div>
+      <div class="field"><label>Series / type</label><input id="a_series" value="${esc(a?.series||"")}"></div>
+      <datalist id="astEqList">${DB.equipment.filter(e=>visibleTo(e,ACTIVE_COMPANY)).map(e=>`<option value="${esc(e.brand+" "+e.series)}">`).join("")}</datalist>
+    </div>
+    <div class="field"><label>Description (optional)</label><input id="a_desc" value="${esc(a?.description||"")}" placeholder="e.g. 12&quot; active 2-way"></div>
+    <div class="field-row c2">
+      <div class="field"><label>Serial number ${a?"":"(first unit — others can be filled later)"}</label><input id="a_serial" value="${esc(a?.serial||"")}"></div>
+      <div class="field"><label>Location / storage</label><input id="a_loc" value="${esc(a?.location||"")}" placeholder="e.g. Gudang rack B"></div>
+    </div>
+    <div class="field-row c2">
+      <div class="field"><label>Owner</label>
+        <select id="a_owner" onchange="document.getElementById('a_ownRow').style.display=this.value==='other'?'block':'none'">
+          ${Object.entries(AOWNER).map(([k,v])=>`<option value="${k}" ${(a?.owner||"company")===k?"selected":""}>${v.label}</option>`).join("")}
+        </select></div>
+      <div class="field"><label>Condition</label>
+        <select id="a_cond">${Object.entries(ACOND).map(([k,v])=>`<option value="${k}" ${(a?.condition||"good")===k?"selected":""}>${v.label}</option>`).join("")}</select></div>
+    </div>
+    <div id="a_ownRow" style="display:${(a?.owner)==="other"?"block":"none"}">
+      <div class="field"><label>Owner name / note</label><input id="a_ownNote" value="${esc(a?.ownerNote||"")}" placeholder="e.g. consigned from Pak X"></div>
+    </div>
+    <div class="field-row c2">
+      <div class="field"><label>Purchase date</label><input id="a_pdate" type="date" value="${esc(a?.purchaseDate||"")}"></div>
+      <div class="field"><label>Purchase cost (IDR)</label><input id="a_pcost" type="number" min="0" value="${a?.purchaseCost||""}"></div>
+    </div>
+    <div class="field-row c2">
+      <div class="field"><label>Daily rental rate (IDR)</label><input id="a_rate" type="number" min="0" value="${a?.dailyRate||""}"></div>
+      <div class="field"><label>Replacement value (IDR) — charged on loss/total damage</label><input id="a_repl" type="number" min="0" value="${a?.replacement||""}"></div>
+    </div>
+    <div class="field"><label>Notes (service history, quirks…)</label><textarea id="a_notes" rows="2">${esc(a?.notes||"")}</textarea></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="saveAssetModal('${id||""}')">${a?"Save changes":"Add"}</button>`,true);
+  $("#a_brand").focus();
+}
+function astFromEq(v){ // typing/picking "Brand Series" from equipment fills series + description
+  const e=DB.equipment.find(x=>(x.brand+" "+x.series).toLowerCase()===String(v).toLowerCase());
+  if(!e) return;
+  $("#a_brand").value=e.brand; $("#a_series").value=e.series;
+  if(!$("#a_desc").value) $("#a_desc").value=e.description||"";
+  if(!$("#a_cat").value) $("#a_cat").value=e.category||"";
+}
+async function saveAssetModal(id){
+  const rec={code:$("#a_code").value.trim(),category:$("#a_cat").value.trim(),brand:$("#a_brand").value.trim(),series:$("#a_series").value.trim(),
+    description:$("#a_desc").value.trim(),serial:$("#a_serial").value.trim(),location:$("#a_loc").value.trim(),
+    owner:$("#a_owner").value,ownerNote:$("#a_ownNote").value.trim(),condition:$("#a_cond").value,
+    purchaseDate:$("#a_pdate").value,purchaseCost:Number($("#a_pcost").value)||0,
+    dailyRate:Number($("#a_rate").value)||0,replacement:Number($("#a_repl").value)||0,notes:$("#a_notes").value.trim()};
+  if(!rec.brand&&!rec.series&&!rec.description) return alert("Fill in at least the brand or series.");
+  const e=DB.equipment.find(x=>x.brand.trim().toLowerCase()===rec.brand.toLowerCase()&&x.series.trim().toLowerCase()===rec.series.toLowerCase());
+  rec.equipmentId=e?e.id:"";
+  if(id){
+    Object.assign(DB.assets.find(x=>x.id===id),rec);
+  }else{
+    const qty=Math.max(1,Math.min(50,Number($("#a_qty")?.value)||1));
+    const m=rec.code.match(/^(.*?)(\d+)\s*$/);
+    for(let i=0;i<qty;i++){
+      const code=i===0?rec.code:(m?m[1]+String(Number(m[2])+i).padStart(m[2].length,"0"):rec.code+"-"+(i+1));
+      DB.assets.push({id:uid(),...rec,code,serial:i===0?rec.serial:"",companyId:ACTIVE_COMPANY});
+    }
+  }
+  closeModal(); render();
+  await persist(saveAssets);
+}
+async function duplicateAsset(id){
+  const a=DB.assets.find(x=>x.id===id);
+  const copy={...a,id:uid(),code:nextAssetCode(),serial:""};
+  DB.assets.push(copy); render();
+  await persist(saveAssets,"Unit added — fill in its serial number");
+}
+async function deleteAsset(id){
+  const a=DB.assets.find(x=>x.id===id);
+  if(!confirm("Delete asset "+(a.code||a.brand+" "+a.series)+"? For gear you no longer own, setting condition to Retired keeps its history instead.")) return;
+  DB.assets=DB.assets.filter(x=>x.id!==id); render();
+  await persist(saveAssets,"Asset deleted");
 }
 
 /* ================= CLIENTS TAB ================= */
