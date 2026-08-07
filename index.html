@@ -259,12 +259,13 @@ const SHEETS = {
   Companies:    ["ID","Name","Tagline","Address","Contact","Bank Details","Accounts"],
   Users:        ["ID","Email","Roles","Companies","Locked"],
   Clients:      ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies"],
-  Assets:       ["ID","Asset Code","Brand","Series/Type","Description","Category","Serial Number","Owner","Owner Note","Condition","Location","Purchase Date","Purchase Cost","Daily Rate","Replacement Value","Company ID","Notes","Equipment ID"]
+  Assets:       ["ID","Asset Code","Brand","Series/Type","Description","Category","Serial Number","Owner","Owner Note","Condition","Location","Purchase Date","Purchase Cost","Daily Rate","Replacement Value","Company ID","Notes","Equipment ID"],
+  Bookings:     ["ID","Project ID","Kind","Brand","Series","Partner ID","Qty","From","To","Notes","Status"]
 };
 
 /* ================= state ================= */
 let token=null, tokenExp=0, userEmail="", userPic="";
-let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[],distributors:[],companies:[],users:[],clients:[],assets:[]};
+let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[],distributors:[],companies:[],users:[],clients:[],assets:[],bookings:[]};
 let route={view:"home",tab:"projects",ptab:"docs",projectId:null,quoteId:null,companyFilter:""};
 let dirty=false;
 
@@ -428,7 +429,7 @@ async function loadAll(){
       return {name:tabNames[i],rows:rows.length,bytes:new Blob([JSON.stringify(rows)]).size,maxCell,
               maxLabel:maxRow?String(maxRow[2]||maxRow[3]||maxRow[1]||maxRow[0]||""):""};
     })};
-  const [eq,pr,qu,nt,sp,di,co,us,cl,ast]=res.valueRanges.map(v=>v.values||[]);
+  const [eq,pr,qu,nt,sp,di,co,us,cl,ast,bk]=res.valueRanges.map(v=>v.values||[]);
   DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||"",distributor:r[9]||"",
     companies:(r[10]||"").split(",").filter(Boolean),costs:(()=>{try{return JSON.parse(r[11]||"{}")}catch(e){return {}}})(),
     prices:(()=>{try{return JSON.parse(r[12]||"{}")}catch(e){return {}}})()}));
@@ -456,6 +457,8 @@ async function loadAll(){
     serial:r[6]||"",owner:r[7]||"company",ownerNote:r[8]||"",condition:r[9]||"good",location:r[10]||"",
     purchaseDate:r[11]||"",purchaseCost:Number(r[12])||0,dailyRate:Number(r[13])||0,replacement:Number(r[14])||0,
     companyId:r[15]||"",notes:r[16]||"",equipmentId:r[17]||""}));
+  DB.bookings=(bk||[]).filter(r=>r[0]).map(r=>({id:r[0],projectId:r[1]||"",kind:r[2]||"asset",brand:r[3]||"",series:r[4]||"",
+    partnerId:r[5]||"",qty:Number(r[6])||1,from:r[7]||"",to:r[8]||"",notes:r[9]||"",status:r[10]||"reserved"}));
 }
 /* ---------------------------------------------------------------
    Concurrency-safe saving.
@@ -538,6 +541,7 @@ const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.t
 const saveUsers=()=>saveTab("Users",DB.users.map(u=>[u.id,u.email,u.roles.join(","),u.companies.join(","),u.locked?"TRUE":"FALSE"]));
 const saveClients=()=>saveTab("Clients",DB.clients.map(c=>[c.id,c.name,c.contact,c.phone,c.email,c.address,c.notes,(c.companies||[]).join(",")]));
 const saveAssets=()=>saveTab("Assets",DB.assets.map(a=>[a.id,a.code,a.brand,a.series,a.description,a.category,a.serial,a.owner,a.ownerNote,a.condition,a.location,a.purchaseDate,a.purchaseCost||0,a.dailyRate||0,a.replacement||0,a.companyId||"",a.notes||"",a.equipmentId||""]));
+const saveBookings=()=>saveTab("Bookings",DB.bookings.map(b=>[b.id,b.projectId,b.kind,b.brand,b.series,b.partnerId,b.qty||1,b.from,b.to,b.notes||"",b.status||"reserved"]));
 async function persist(fn,msg){
   try{
     $("#saveState").textContent="saving…";
@@ -593,7 +597,7 @@ let ACTIVE_COMPANY=null; // company issuer chosen after login
 const ROLE_LABEL={admin:"Administrator",engineer:"Engineer",adminproject:"Admin Project",finance:"Finance",purchasing:"Purchasing"};
 const PERMS={
   equipment:["admin","purchasing"], distributors:["admin","purchasing"],
-  templates:["admin","adminproject"], companies:["admin"], users:["admin"], clients:["admin","adminproject"], dashboard:["admin","finance","purchasing"], assets:["admin","adminproject","purchasing"],
+  templates:["admin","adminproject"], companies:["admin"], users:["admin"], clients:["admin","adminproject"], dashboard:["admin","finance","purchasing"], assets:["admin","adminproject","purchasing"], book:["admin","adminproject","engineer"],
   quote:["admin","engineer","adminproject"], rap:["admin","adminproject","purchasing"],
   billing:["admin","finance"], po:["admin","purchasing"], sj:["admin","adminproject","purchasing"], ba:["admin","adminproject"], manage:["admin","adminproject"]
 };
@@ -624,11 +628,11 @@ const PSTATUS={
 };
 const PTYPE={
   installation:{label:"Installation",fg:"var(--accent-dark)",bg:"var(--accent-soft)",
-    mods:{po:true, sj:true, ba:true}},
+    mods:{po:true, sj:true, ba:true, book:false}},
   rental:      {label:"Rental",      fg:"#2C4A6E",bg:"#E2E9F3",
-    mods:{po:false,sj:true, ba:true}},
+    mods:{po:false,sj:true, ba:true, book:true}},
   service:     {label:"Service",     fg:"#B4720E",bg:"#F7EDDA",
-    mods:{po:false,sj:false,ba:true}}
+    mods:{po:false,sj:false,ba:true, book:true}}
 };
 const typePill=t=>{const x=PTYPE[t]||PTYPE.installation;return `<span class="pill" style="background:${x.bg};color:${x.fg}">${x.label}</span>`;};
 const projType=p=>PTYPE[p?.ptype]?p.ptype:"installation";
@@ -813,7 +817,7 @@ function openProjectModal(p){
     <div class="field"><label>Project name</label><input id="m_name" value="${esc(p?.name||"")}" placeholder="e.g. Paragon Multifunction Room"></div>
     <div class="field-row c2">
       <div class="field"><label>Project type</label>
-        <select id="m_ptype" onchange="(function(t){const d=PTYPE[t].mods;["po","sj","ba"].forEach(k=>{const cb=document.getElementById("m_mod_"+k);if(cb)cb.checked=d[k];});})(this.value)">
+        <select id="m_ptype" onchange="(function(t){const d=PTYPE[t].mods;["po","sj","ba","book"].forEach(k=>{const cb=document.getElementById("m_mod_"+k);if(cb)cb.checked=d[k];});})(this.value)">
           ${Object.entries(PTYPE).map(([k,v])=>`<option value="${k}" ${(p?projType(p):"installation")===k?"selected":""}>${v.label}</option>`).join("")}
         </select></div>
       <div class="field"><label>Project status</label>
@@ -821,7 +825,7 @@ function openProjectModal(p){
     </div>
     <div class="field"><label>Modules for this project (type sets the defaults — override freely)</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${[["po","Purchase Orders"],["sj","Surat Jalan"],["ba","BA & Handover"]].map(([k,lbl])=>`
+        ${[["po","Purchase Orders"],["sj","Surat Jalan"],["ba","BA & Handover"],["book","Booking & Crew"]].map(([k,lbl])=>`
           <label style="display:flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line);border-radius:8px;cursor:pointer;font-size:13px">
             <input type="checkbox" id="m_mod_${k}" ${(p?moduleOn(p,k):PTYPE.installation.mods[k])?"checked":""}>${lbl}</label>`).join("")}
       </div>
@@ -855,7 +859,7 @@ async function saveProjectModal(id){
   const clientName=$("#m_client").value.trim()||(clientId?(DB.clients.find(x=>x.id===clientId)?.name||""):"");
   const engineers=[...document.querySelectorAll(".m_eng:checked")].map(x=>x.value);
   const ptype=$("#m_ptype").value;
-  const modules={po:$("#m_mod_po").checked,sj:$("#m_mod_sj").checked,ba:$("#m_mod_ba").checked};
+  const modules={po:$("#m_mod_po").checked,sj:$("#m_mod_sj").checked,ba:$("#m_mod_ba").checked,book:$("#m_mod_book").checked};
   if(id){ const p=getProject(id); p.name=name; p.location=$("#m_loc").value.trim(); p.client=clientName; p.clientId=clientId; p.companyId=$("#m_company").value; p.engineers=engineers; p.status=$("#m_status").value; p.ptype=ptype; p.modules=modules; }
   else DB.projects.unshift({id:uid(),name,location:$("#m_loc").value.trim(),client:clientName,clientId,companyId:$("#m_company").value,created:todayISO(),summaryNotes:"",engineers,status:$("#m_status").value,ptype,modules,sig:{prepName:"",prepTitle:"",apprName:"",apprCompany:""}});
   closeModal(); render(); await persist(saveProjects);
@@ -1642,6 +1646,188 @@ async function deleteAsset(id){
   await persist(saveAssets,"Asset deleted");
 }
 
+/* ================= BOOKING & AVAILABILITY ================= */
+const bkActive=b=>!["cancelled"].includes(b.status||"reserved");
+const bkOverlap=(b,from,to)=>b.from&&b.to&&b.from<=to&&from<=b.to;
+const dayList=(from,to)=>{const out=[];let d=new Date(from+"T00:00:00");const end=new Date(to+"T00:00:00");
+  let guard=0; while(d<=end&&guard++<730){out.push(d.toISOString().slice(0,10));d.setDate(d.getDate()+1);} return out;};
+const bookCompanyOf=b=>{const p=getProject(b.projectId);return p?(p.companyId||DB.companies[0]?.id):null;};
+/* bookable pool for a model = units in usable condition */
+const modelPool=(cid,brand,series)=>DB.assets.filter(a=>
+  (a.companyId||DB.companies[0]?.id)===cid&&["good","check"].includes(a.condition||"good")&&
+  a.brand.trim().toLowerCase()===String(brand).trim().toLowerCase()&&
+  a.series.trim().toLowerCase()===String(series).trim().toLowerCase()).length;
+/* max units of a model committed on any single day of the range */
+function modelBookedMax(cid,brand,series,from,to,excludeId){
+  const rel=DB.bookings.filter(b=>b.kind==="asset"&&bkActive(b)&&b.id!==excludeId&&bookCompanyOf(b)===cid&&
+    b.brand.trim().toLowerCase()===String(brand).trim().toLowerCase()&&
+    b.series.trim().toLowerCase()===String(series).trim().toLowerCase()&&bkOverlap(b,from,to));
+  if(!rel.length) return {max:0,bookings:rel};
+  let max=0;
+  dayList(from,to).forEach(d=>{const n=rel.filter(b=>b.from<=d&&d<=b.to).reduce((a,b)=>a+(b.qty||1),0); if(n>max)max=n;});
+  return {max,bookings:rel};
+}
+const crewConflicts=(partnerId,from,to,excludeId)=>DB.bookings.filter(b=>b.kind==="crew"&&bkActive(b)&&b.id!==excludeId&&
+  b.partnerId===partnerId&&bkOverlap(b,from,to));
+/* fleet models of the active company */
+const fleetModels=cid=>{const m={};DB.assets.filter(a=>(a.companyId||DB.companies[0]?.id)===cid&&a.condition!=="retired")
+  .forEach(a=>{const k=(a.brand+"|"+a.series).toLowerCase(); m[k]=m[k]||{brand:a.brand,series:a.series,pool:0,rate:a.dailyRate||0}; 
+    if(["good","check"].includes(a.condition||"good")) m[k].pool++; if(a.dailyRate&&!m[k].rate) m[k].rate=a.dailyRate;});
+  return Object.values(m).sort((a,b)=>(a.brand+a.series).localeCompare(b.brand+b.series));};
+
+function renderProjectBooking(b,p){
+  const cid=p.companyId||DB.companies[0]?.id;
+  const lines=DB.bookings.filter(x=>x.projectId===p.id);
+  const aLines=lines.filter(x=>x.kind==="asset"), cLines=lines.filter(x=>x.kind==="crew");
+  const models=fleetModels(cid);
+  const crew=DB.distributors.filter(d=>visibleTo(d,cid)&&(d.types||[]).includes("crew"));
+  const assetRow=x=>{
+    const pool=modelPool(cid,x.brand,x.series);
+    const others=modelBookedMax(cid,x.brand,x.series,x.from||"0000",x.to||"9999",x.id).max;
+    const over=x.from&&x.to&&(others+(x.qty||1))>pool;
+    const cancelled=!bkActive(x);
+    return `<tr style="${cancelled?"opacity:.5":""}">
+      <td style="font-weight:600">${esc(x.brand)} ${esc(x.series)}<br><span style="font-size:11px;color:var(--muted)">${pool} unit(s) bookable</span></td>
+      <td><input type="number" class="inline-input num" style="width:64px" min="1" value="${x.qty||1}" ${cancelled?"disabled":""} onchange="bkSet('${x.id}','qty',Number(this.value)||1)"></td>
+      <td><input type="date" class="inline-input" value="${esc(x.from)}" ${cancelled?"disabled":""} onchange="bkSet('${x.id}','from',this.value)"></td>
+      <td><input type="date" class="inline-input" value="${esc(x.to)}" ${cancelled?"disabled":""} onchange="bkSet('${x.id}','to',this.value)"></td>
+      <td><input class="inline-input" value="${esc(x.notes||"")}" placeholder="notes" ${cancelled?"disabled":""} onchange="bkSet('${x.id}','notes',this.value)"></td>
+      <td>${cancelled?'<span class="pill">cancelled</span>':over?`<span class="pill" style="background:#F7E4E1;color:#B3382C" title="${others} already committed elsewhere on these dates, of ${pool} owned — sub-rent the difference or shift dates">⚠ ${others+(x.qty||1)} / ${pool}</span>`:x.from&&x.to?`<span class="pill">✓ fits</span>`:'<span class="pill amber">set dates</span>'}</td>
+      <td class="t-right" style="white-space:nowrap">
+        ${cancelled?`<button class="btn ghost small" onclick="bkSet('${x.id}','status','reserved')">restore</button>`
+                   :`<button class="btn ghost small" onclick="bkSet('${x.id}','status','cancelled')">cancel</button>`}
+        <button class="btn ghost small danger" onclick="bkDelete('${x.id}')">✕</button></td></tr>`;
+  };
+  const crewRow=x=>{
+    const d=DB.distributors.find(z=>z.id===x.partnerId);
+    const conf=x.from&&x.to?crewConflicts(x.partnerId,x.from,x.to,x.id):[];
+    const cancelled=!bkActive(x);
+    return `<tr style="${cancelled?"opacity:.5":""}">
+      <td style="font-weight:600">${esc(d?.name||"?")}<br><span style="font-size:11px;color:var(--muted)">${esc(d?.role||"")}${d?.dayRate?" · "+fmtRp(d.dayRate)+"/day":""}</span></td>
+      <td><input type="date" class="inline-input" value="${esc(x.from)}" ${cancelled?"disabled":""} onchange="bkSet('${x.id}','from',this.value)"></td>
+      <td><input type="date" class="inline-input" value="${esc(x.to)}" ${cancelled?"disabled":""} onchange="bkSet('${x.id}','to',this.value)"></td>
+      <td><input class="inline-input" value="${esc(x.notes||"")}" placeholder="notes (role on this job…)" ${cancelled?"disabled":""} onchange="bkSet('${x.id}','notes',this.value)"></td>
+      <td>${cancelled?'<span class="pill">cancelled</span>':conf.length?`<span class="pill" style="background:#F7E4E1;color:#B3382C" title="${conf.map(c=>getProject(c.projectId)?.name+" ("+fmtDate(c.from)+"–"+fmtDate(c.to)+")").join(", ")}">⚠ busy: ${esc(getProject(conf[0].projectId)?.name||"other job")}</span>`:x.from&&x.to?'<span class="pill">✓ free</span>':'<span class="pill amber">set dates</span>'}</td>
+      <td class="t-right" style="white-space:nowrap">
+        ${cancelled?`<button class="btn ghost small" onclick="bkSet('${x.id}','status','reserved')">restore</button>`
+                   :`<button class="btn ghost small" onclick="bkSet('${x.id}','status','cancelled')">cancel</button>`}
+        <button class="btn ghost small danger" onclick="bkDelete('${x.id}')">✕</button></td></tr>`;
+  };
+  b.innerHTML=`
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+      <button class="btn small" onclick="openAvailability('${cid}')">🗓 Check availability</button></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-pad" style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px">
+        <span class="eyebrow">Equipment bookings — by model, serials assigned at dispatch</span>
+        <button class="btn primary small" onclick="openBkAsset('${p.id}')">+ Book equipment</button></div>
+      ${aLines.length?`<div style="overflow-x:auto"><table class="grid" style="min-width:820px">
+        <thead><tr><th>Model</th><th style="width:76px">Qty</th><th style="width:140px">From</th><th style="width:140px">To</th><th>Notes</th><th style="width:120px">Status</th><th style="width:130px"></th></tr></thead>
+        <tbody>${aLines.map(assetRow).join("")}</tbody></table></div>`
+      :`<div class="empty" style="padding:18px">No equipment booked yet.${models.length?"":" Register assets first — the fleet is empty."}</div>`}
+    </div>
+    <div class="card">
+      <div class="card-pad" style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px">
+        <span class="eyebrow">Crew bookings — named people, shown on quotes only as a line item</span>
+        <button class="btn primary small" onclick="openBkCrew('${p.id}')">+ Book crew</button></div>
+      ${cLines.length?`<div style="overflow-x:auto"><table class="grid" style="min-width:760px">
+        <thead><tr><th>Person</th><th style="width:140px">From</th><th style="width:140px">To</th><th>Notes</th><th style="width:150px">Status</th><th style="width:130px"></th></tr></thead>
+        <tbody>${cLines.map(crewRow).join("")}</tbody></table></div>`
+      :`<div class="empty" style="padding:18px">No crew booked yet.${crew.length?"":" Tag partners as Crew / Operator first."}</div>`}
+    </div>`;
+}
+async function bkSet(id,k,v){ const x=DB.bookings.find(b=>b.id===id); x[k]=v; render(); await persist(saveBookings); }
+async function bkDelete(id){ if(!confirm("Delete this booking line?"))return; DB.bookings=DB.bookings.filter(b=>b.id!==id); render(); await persist(saveBookings,"Booking removed"); }
+function openBkAsset(pid){
+  const p=getProject(pid), cid=p.companyId||DB.companies[0]?.id;
+  const models=fleetModels(cid);
+  if(!models.length) return alert("No assets in the register yet — add the fleet first (Assets tab).");
+  openModal("Book equipment",`
+    <div class="field"><label>Model</label>
+      <select id="bk_model">${models.map((m,i)=>`<option value="${i}">${esc(m.brand)} ${esc(m.series)} — ${m.pool} bookable</option>`).join("")}</select></div>
+    <div class="field-row c3">
+      <div class="field"><label>Qty</label><input id="bk_qty" type="number" min="1" value="1"></div>
+      <div class="field"><label>From</label><input id="bk_from" type="date"></div>
+      <div class="field"><label>To (inclusive)</label><input id="bk_to" type="date"></div>
+    </div>
+    <div class="field"><label>Notes</label><input id="bk_notes" placeholder="e.g. FOH mains"></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="doBkAsset('${pid}')">Book</button>`);
+}
+async function doBkAsset(pid){
+  const p=getProject(pid), cid=p.companyId||DB.companies[0]?.id;
+  const m=fleetModels(cid)[Number($("#bk_model").value)];
+  const from=$("#bk_from").value, to=$("#bk_to").value;
+  if(!from||!to||to<from) return alert("Set a valid date range (To can equal From for a one-day job).");
+  const rec={id:uid(),projectId:pid,kind:"asset",brand:m.brand,series:m.series,partnerId:"",qty:Math.max(1,Number($("#bk_qty").value)||1),
+    from,to,notes:$("#bk_notes").value.trim(),status:"reserved"};
+  DB.bookings.push(rec); closeModal();
+  const {max}=modelBookedMax(cid,m.brand,m.series,from,to,rec.id);
+  const pool=modelPool(cid,m.brand,m.series);
+  render(); await persist(saveBookings,(max+rec.qty>pool)?"Booked — ⚠ over fleet size, plan a sub-rental":"Booked");
+}
+function openBkCrew(pid){
+  const p=getProject(pid), cid=p.companyId||DB.companies[0]?.id;
+  const crew=DB.distributors.filter(d=>visibleTo(d,cid)&&(d.types||[]).includes("crew"));
+  if(!crew.length) return alert("No partners tagged as Crew / Operator yet — tag them in the Partners tab.");
+  openModal("Book crew",`
+    <div class="field"><label>Person</label>
+      <select id="bk_person">${crew.map(d=>`<option value="${d.id}">${esc(d.name)}${d.role?" — "+esc(d.role):""}</option>`).join("")}</select></div>
+    <div class="field-row c2">
+      <div class="field"><label>From</label><input id="bk_from" type="date"></div>
+      <div class="field"><label>To (inclusive)</label><input id="bk_to" type="date"></div>
+    </div>
+    <div class="field"><label>Notes</label><input id="bk_notes" placeholder="e.g. FOH engineer, loading 06:00"></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="doBkCrew('${pid}')">Book</button>`);
+}
+async function doBkCrew(pid){
+  const from=$("#bk_from").value, to=$("#bk_to").value, who=$("#bk_person").value;
+  if(!from||!to||to<from) return alert("Set a valid date range.");
+  const conf=crewConflicts(who,from,to,null);
+  const rec={id:uid(),projectId:pid,kind:"crew",brand:"",series:"",partnerId:who,qty:1,from,to,notes:$("#bk_notes").value.trim(),status:"reserved"};
+  DB.bookings.push(rec); closeModal(); render();
+  await persist(saveBookings,conf.length?"Booked — ⚠ this person is also on "+(getProject(conf[0].projectId)?.name||"another job"):"Booked");
+}
+/* availability checker across the whole company */
+function openAvailability(cid){
+  const today=todayISO();
+  openModal("Availability — "+esc(DB.companies.find(c=>c.id===cid)?.name||""),`
+    <div class="field-row c2" style="margin-bottom:4px">
+      <div class="field"><label>From</label><input id="av_from" type="date" value="${today}" onchange="avRender('${cid}')"></div>
+      <div class="field"><label>To (inclusive)</label><input id="av_to" type="date" value="${today}" onchange="avRender('${cid}')"></div>
+    </div>
+    <div id="avBody"></div>`,
+    `<button class="btn primary" onclick="closeModal()">Close</button>`,true);
+  avRender(cid);
+}
+function avRender(cid){
+  const from=$("#av_from").value, to=$("#av_to").value, el=$("#avBody");
+  if(!el) return;
+  if(!from||!to||to<from){ el.innerHTML=`<div class="empty">Pick a valid range.</div>`; return; }
+  const models=fleetModels(cid);
+  const crew=DB.distributors.filter(d=>visibleTo(d,cid)&&(d.types||[]).includes("crew"));
+  el.innerHTML=`
+    ${models.length?`<span class="eyebrow">Equipment</span>
+    <table class="grid" style="margin:6px 0 16px">
+      <thead><tr><th>Model</th><th class="t-right">Owned</th><th class="t-right">Committed</th><th class="t-right">Free</th></tr></thead>
+      <tbody>${models.map(m=>{
+        const {max}=modelBookedMax(cid,m.brand,m.series,from,to,null);
+        const free=m.pool-max;
+        return `<tr><td style="font-weight:600">${esc(m.brand)} ${esc(m.series)}</td>
+          <td class="t-right num">${m.pool}</td><td class="t-right num">${max||"—"}</td>
+          <td class="t-right num" style="font-weight:700;color:${free>0?"var(--accent-dark)":"var(--red)"}">${free}</td></tr>`;}).join("")}
+      </tbody></table>`:""}
+    ${crew.length?`<span class="eyebrow">Crew</span>
+    <table class="grid" style="margin-top:6px">
+      <thead><tr><th>Person</th><th>Role</th><th>Status in range</th></tr></thead>
+      <tbody>${crew.map(d=>{
+        const conf=crewConflicts(d.id,from,to,null);
+        return `<tr><td style="font-weight:600">${esc(d.name)}</td><td style="font-size:12.5px">${esc(d.role||"—")}</td>
+          <td>${conf.length?`<span class="pill" style="background:#F7E4E1;color:#B3382C">busy — ${conf.map(c=>esc(getProject(c.projectId)?.name||"?")+" ("+fmtDate(c.from)+"–"+fmtDate(c.to)+")").join(", ")}</span>`:'<span class="pill">free</span>'}</td></tr>`;}).join("")}
+      </tbody></table>`:""}
+    ${!models.length&&!crew.length?`<div class="empty">No assets or crew yet.</div>`:""}`;
+}
+
 /* ================= CLIENTS TAB ================= */
 const clientProjects=c=>DB.projects.filter(p=>p.clientId===c.id||(p.client&&p.client.trim().toLowerCase()===c.name.trim().toLowerCase()));
 function renderClientsTab(b){
@@ -1960,8 +2146,9 @@ function renderProject(v,p){
   if(pCo!==ACTIVE_COMPANY){ ACTIVE_COMPANY=pCo; updateCoChip(); }
   const co=projCompany(p);
   const tabsAllowed={docs:can("quote")||can("rap"),billing:can("billing"),
-    po:can("po")&&moduleOn(p,"po"),sj:can("sj")&&moduleOn(p,"sj"),ba:can("ba")&&moduleOn(p,"ba")};
-  if(!tabsAllowed[route.ptab]) route.ptab=tabsAllowed.docs?"docs":tabsAllowed.billing?"billing":tabsAllowed.po?"po":tabsAllowed.sj?"sj":"ba";
+    po:can("po")&&moduleOn(p,"po"),sj:can("sj")&&moduleOn(p,"sj"),ba:can("ba")&&moduleOn(p,"ba"),
+    book:can("book")&&moduleOn(p,"book")};
+  if(!tabsAllowed[route.ptab]) route.ptab=tabsAllowed.docs?"docs":tabsAllowed.billing?"billing":tabsAllowed.book?"book":tabsAllowed.po?"po":tabsAllowed.sj?"sj":"ba";
   const ptab=route.ptab;
   v.innerHTML=`
     <div class="page-head">
@@ -1983,6 +2170,7 @@ function renderProject(v,p){
     </div>
     <div class="tabs">
       ${tabsAllowed.docs?`<button class="tab ${ptab==="docs"?"active":""}" onclick="route.ptab='docs';render()">${can("quote")&&can("rap")?"Quotations & Costs":can("quote")?"Quotations":"Costs"}</button>`:""}
+      ${tabsAllowed.book?`<button class="tab ${ptab==="book"?"active":""}" onclick="route.ptab='book';render()">Booking & Crew</button>`:""}
       ${tabsAllowed.billing?`<button class="tab ${ptab==="billing"?"active":""}" onclick="route.ptab='billing';render()">SO · Invoices · Receipts</button>`:""}
       ${tabsAllowed.po?`<button class="tab ${ptab==="po"?"active":""}" onclick="route.ptab='po';render()">Purchase Orders</button>`:""}
       ${tabsAllowed.sj?`<button class="tab ${ptab==="sj"?"active":""}" onclick="route.ptab='sj';render()">Surat Jalan</button>`:""}
@@ -1994,6 +2182,7 @@ function renderProject(v,p){
   else if(ptab==="billing") renderProjectBilling(b,p);
   else if(ptab==="sj") renderProjectSJ(b,p);
   else if(ptab==="ba") renderProjectBA(b,p);
+  else if(ptab==="book") renderProjectBooking(b,p);
   else renderProjectPO(b,p);
 }
 function docRowActions(q,kind){
@@ -2463,7 +2652,7 @@ async function doPOFromRAP(rapId){
   const proj=getProject(rap.projectId);
   let modMsg="";
   if(proj&&!moduleOn(proj,"po")){   // service/rental projects hide the PO tab by default
-    proj.modules={po:true,sj:moduleOn(proj,"sj"),ba:moduleOn(proj,"ba")};
+    proj.modules={po:true,sj:moduleOn(proj,"sj"),ba:moduleOn(proj,"ba"),book:moduleOn(proj,"book")};
     modMsg=" · PO module enabled for this project";
   }
   route.ptab="po";
