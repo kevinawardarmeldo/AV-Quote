@@ -251,7 +251,7 @@ const CONFIG = {
 
 const SHEETS = {
   Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price","Price Updated","Distributor","Companies","Budget Prices","Sell Prices"],
-  Projects:     ["ID","Name","Location","Client","Created","Summary Notes","Signature","Company ID","Client ID","Engineers","Status","Type","Modules"],
+  Projects:     ["ID","Name","Location","Client","Created","Summary Notes","Signature","Company ID","Client ID","Engineers","Status","Type","Modules","Mob Date","Event Date","Demob Date"],
   Quotations:   ["ID","ProjectID","QuoteNumber","Title","Date","Tax","DataJSON","Updated"],
   NoteTemplates:["ID","Name","Content"],
   SignaturePresets:["ID","Name","JSON"],
@@ -438,7 +438,8 @@ async function loadAll(){
     return {id:r[0],name:r[1]||"",location:r[2]||"",client:r[3]||"",created:r[4]||"",summaryNotes:r[5]||"",
       sig:{prepName:sig.prepName||"",prepTitle:sig.prepTitle||"",apprName:sig.apprName||"",apprCompany:sig.apprCompany||""},
       companyId:r[7]||"",clientId:r[8]||"",engineers:(r[9]||"").split(",").filter(Boolean),status:r[10]||"onquote",
-      ptype:r[11]||"installation",modules:(()=>{try{return r[12]?JSON.parse(r[12]):null}catch(e){return null}})()};
+      ptype:r[11]||"installation",modules:(()=>{try{return r[12]?JSON.parse(r[12]):null}catch(e){return null}})(),
+      mobDate:r[13]||"",eventDate:r[14]||"",demobDate:r[15]||""};
   });
   DB.quotations=qu.filter(r=>r[0]).map(r=>{
     let d={}; try{d=JSON.parse(r[6]||"{}")}catch(e){}
@@ -532,7 +533,7 @@ async function saveTab(tab,rows){
   snapTab(tab,merged);
 }
 const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||"",e.distributor||"",(e.companies||[]).join(","),JSON.stringify(e.costs||{}),JSON.stringify(e.prices||{})]));
-const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||"",JSON.stringify(p.sig||{}),p.companyId||"",p.clientId||"",(p.engineers||[]).join(","),p.status||"onquote",p.ptype||"installation",p.modules?JSON.stringify(p.modules):""]));
+const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||"",JSON.stringify(p.sig||{}),p.companyId||"",p.clientId||"",(p.engineers||[]).join(","),p.status||"onquote",p.ptype||"installation",p.modules?JSON.stringify(p.modules):"",p.mobDate||"",p.eventDate||"",p.demobDate||""]));
 const saveSigPresets=()=>saveTab("SignaturePresets",DB.sigPresets.map(t=>[t.id,t.name,JSON.stringify({prepName:t.prepName||"",prepTitle:t.prepTitle||"",apprName:t.apprName||"",apprCompany:t.apprCompany||""})]));
 const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0},extra:q.extra||{}}),new Date().toISOString()]));
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
@@ -830,6 +831,12 @@ function openProjectModal(p){
             <input type="checkbox" id="m_mod_${k}" ${(p?moduleOn(p,k):PTYPE.installation.mods[k])?"checked":""}>${lbl}</label>`).join("")}
       </div>
       <span style="font-size:11.5px;color:var(--muted)">Quotations, RAP, SO, invoices &amp; receipts are always available.</span></div>
+    <div class="field"><label>Schedule — bookings prefill from these dates</label>
+      <div class="field-row c3">
+        <div class="field"><label style="font-size:11px">Mobilize (gear out)</label><input id="m_mob" type="date" value="${esc(p?.mobDate||"")}"></div>
+        <div class="field"><label style="font-size:11px">Event date</label><input id="m_event" type="date" value="${esc(p?.eventDate||"")}"></div>
+        <div class="field"><label style="font-size:11px">Demobilize (gear back)</label><input id="m_demob" type="date" value="${esc(p?.demobDate||"")}"></div>
+      </div></div>
     ${(()=>{const engs=DB.users.filter(u=>u.roles.includes("engineer"));
       if(!engs.length) return "";
       const sel=p?.engineers||[];
@@ -860,8 +867,8 @@ async function saveProjectModal(id){
   const engineers=[...document.querySelectorAll(".m_eng:checked")].map(x=>x.value);
   const ptype=$("#m_ptype").value;
   const modules={po:$("#m_mod_po").checked,sj:$("#m_mod_sj").checked,ba:$("#m_mod_ba").checked,book:$("#m_mod_book").checked};
-  if(id){ const p=getProject(id); p.name=name; p.location=$("#m_loc").value.trim(); p.client=clientName; p.clientId=clientId; p.companyId=$("#m_company").value; p.engineers=engineers; p.status=$("#m_status").value; p.ptype=ptype; p.modules=modules; }
-  else DB.projects.unshift({id:uid(),name,location:$("#m_loc").value.trim(),client:clientName,clientId,companyId:$("#m_company").value,created:todayISO(),summaryNotes:"",engineers,status:$("#m_status").value,ptype,modules,sig:{prepName:"",prepTitle:"",apprName:"",apprCompany:""}});
+  if(id){ const p=getProject(id); p.name=name; p.location=$("#m_loc").value.trim(); p.client=clientName; p.clientId=clientId; p.companyId=$("#m_company").value; p.engineers=engineers; p.status=$("#m_status").value; p.ptype=ptype; p.modules=modules; p.mobDate=$("#m_mob").value; p.eventDate=$("#m_event").value; p.demobDate=$("#m_demob").value; }
+  else DB.projects.unshift({id:uid(),name,location:$("#m_loc").value.trim(),client:clientName,clientId,companyId:$("#m_company").value,created:todayISO(),summaryNotes:"",engineers,status:$("#m_status").value,ptype,modules,mobDate:$("#m_mob").value,eventDate:$("#m_event").value,demobDate:$("#m_demob").value,sig:{prepName:"",prepTitle:"",apprName:"",apprCompany:""}});
   closeModal(); render(); await persist(saveProjects);
 }
 async function deleteProject(id){
@@ -1714,8 +1721,14 @@ function renderProjectBooking(b,p){
         <button class="btn ghost small danger" onclick="bkDelete('${x.id}')">✕</button></td></tr>`;
   };
   b.innerHTML=`
-    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
-      <button class="btn small" onclick="openAvailability('${cid}')">🗓 Check availability</button></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+      <div style="font-size:12.5px;color:var(--muted)">
+        ${(p.mobDate||p.eventDate||p.demobDate)
+          ?`Schedule: ${p.mobDate?"mob <strong>"+fmtDate(p.mobDate)+"</strong>":""}${p.eventDate?" · event <strong>"+fmtDate(p.eventDate)+"</strong>":""}${p.demobDate?" · demob <strong>"+fmtDate(p.demobDate)+"</strong>":""}
+           <button class="btn ghost small" onclick="openProjectModal('${p.id}')">edit</button>`
+          :`No project schedule yet — <button class="btn ghost small" onclick="openProjectModal('${p.id}')">set mob / event / demob dates</button> and bookings will prefill.`}
+      </div>
+      <button class="btn small" onclick="openAvailability('${cid}','${esc(p.mobDate||p.eventDate||"")}','${esc(p.demobDate||p.eventDate||"")}')">🗓 Check availability</button></div>
     <div class="card" style="margin-bottom:16px">
       <div class="card-pad" style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px">
         <span class="eyebrow">Equipment bookings — by model, serials assigned at dispatch</span>
@@ -1746,9 +1759,10 @@ function openBkAsset(pid){
       <select id="bk_model">${models.map((m,i)=>`<option value="${i}">${esc(m.brand)} ${esc(m.series)} — ${m.pool} bookable</option>`).join("")}</select></div>
     <div class="field-row c3">
       <div class="field"><label>Qty</label><input id="bk_qty" type="number" min="1" value="1"></div>
-      <div class="field"><label>From</label><input id="bk_from" type="date"></div>
-      <div class="field"><label>To (inclusive)</label><input id="bk_to" type="date"></div>
+      <div class="field"><label>From</label><input id="bk_from" type="date" value="${esc(p.mobDate||p.eventDate||"")}"></div>
+      <div class="field"><label>To (inclusive)</label><input id="bk_to" type="date" value="${esc(p.demobDate||p.eventDate||"")}"></div>
     </div>
+    ${p.mobDate||p.eventDate?`<span style="font-size:11.5px;color:var(--muted)">Prefilled from the project schedule (mob → demob).</span>`:""}
     <div class="field"><label>Notes</label><input id="bk_notes" placeholder="e.g. FOH mains"></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="doBkAsset('${pid}')">Book</button>`);
@@ -1773,9 +1787,10 @@ function openBkCrew(pid){
     <div class="field"><label>Person</label>
       <select id="bk_person">${crew.map(d=>`<option value="${d.id}">${esc(d.name)}${d.role?" — "+esc(d.role):""}</option>`).join("")}</select></div>
     <div class="field-row c2">
-      <div class="field"><label>From</label><input id="bk_from" type="date"></div>
-      <div class="field"><label>To (inclusive)</label><input id="bk_to" type="date"></div>
+      <div class="field"><label>From</label><input id="bk_from" type="date" value="${esc(p.mobDate||p.eventDate||"")}"></div>
+      <div class="field"><label>To (inclusive)</label><input id="bk_to" type="date" value="${esc(p.demobDate||p.eventDate||"")}"></div>
     </div>
+    ${p.mobDate||p.eventDate?`<span style="font-size:11.5px;color:var(--muted)">Prefilled from the project schedule (mob → demob).</span>`:""}
     <div class="field"><label>Notes</label><input id="bk_notes" placeholder="e.g. FOH engineer, loading 06:00"></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="doBkCrew('${pid}')">Book</button>`);
@@ -1789,12 +1804,12 @@ async function doBkCrew(pid){
   await persist(saveBookings,conf.length?"Booked — ⚠ this person is also on "+(getProject(conf[0].projectId)?.name||"another job"):"Booked");
 }
 /* availability checker across the whole company */
-function openAvailability(cid){
+function openAvailability(cid,from,to){
   const today=todayISO();
   openModal("Availability — "+esc(DB.companies.find(c=>c.id===cid)?.name||""),`
     <div class="field-row c2" style="margin-bottom:4px">
-      <div class="field"><label>From</label><input id="av_from" type="date" value="${today}" onchange="avRender('${cid}')"></div>
-      <div class="field"><label>To (inclusive)</label><input id="av_to" type="date" value="${today}" onchange="avRender('${cid}')"></div>
+      <div class="field"><label>From</label><input id="av_from" type="date" value="${from||today}" onchange="avRender('${cid}')"></div>
+      <div class="field"><label>To (inclusive)</label><input id="av_to" type="date" value="${to||from||today}" onchange="avRender('${cid}')"></div>
     </div>
     <div id="avBody"></div>`,
     `<button class="btn primary" onclick="closeModal()">Close</button>`,true);
