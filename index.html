@@ -1508,6 +1508,13 @@ function renderDashboardTab(b){
 let assetCondFilter="", assetOwnerFilter="", assetSearch="", assetBrandFilter="", assetCatFilter="", assetView="register", assetUtilYear=new Date().getFullYear();
 const astScope=()=>{const allCo=$("#astAllCo")?.checked;
   return DB.assets.filter(a=>allCo&&isAdmin()||((a.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY));};
+function astMatches(a){
+  const q=assetSearch.trim().toLowerCase();
+  if(q&&!(a.code+" "+a.brand+" "+a.series+" "+a.description+" "+a.serial+" "+a.category+" "+a.location).toLowerCase().includes(q)) return false;
+  if(assetBrandFilter&&a.brand!==assetBrandFilter) return false;
+  if(assetCatFilter&&(a.category||"")!==assetCatFilter) return false;
+  return true;
+}
 function astFiltered(all){
   const q=assetSearch.trim().toLowerCase();
   let list=all.filter(a=>!q||(a.code+" "+a.brand+" "+a.series+" "+a.description+" "+a.serial+" "+a.category+" "+a.location).toLowerCase().includes(q));
@@ -1544,7 +1551,7 @@ function projEquipRevenue(pid){
   return {value:derived,derived,pkg,jcs,manual:false};
 }
 /* list (rate-card) value a unit contributed to one booking */
-const unitListValue=(a,days)=>(a?.dailyRate||0)*days;
+const unitListValue=(a,days)=>rateOf(a)*days;
 /* every dispatched unit-stint on a project, with its list value */
 function projUnitStints(pid,year){
   const out=[];
@@ -1577,6 +1584,8 @@ function projAllocation(pid,year){
    attributed to any serial, so it counts nothing (those are surfaced separately).
    A unit still out uses the booking's end date. Revenue is the unit's daily rate x
    days out: an earning estimate per unit, not invoiced money, which lives on the documents. */
+const fmtPct=v=>{ if(!v) return "0%";
+  return (v<1?v.toFixed(v<0.1?2:1):Math.round(v)).toLocaleString("id-ID")+"%"; };
 const dayCount=(from,to)=>{ if(!from||!to||to<from) return 0;
   return Math.round((new Date(to+"T00:00:00")-new Date(from+"T00:00:00"))/86400000)+1; };
 function assetUsage(assetId,year){
@@ -1607,7 +1616,7 @@ function utilRows(cid,year,ownerFilter){
   return DB.assets.filter(a=>(a.companyId||DB.companies[0]?.id)===cid&&(!ownerFilter||(a.owner||"company")===ownerFilter))
     .map(a=>{
       const u=assetUsage(a.id,year);
-      const list=u.listVal||(a.dailyRate||0)*u.days;
+      const list=u.listVal||rateOf(a)*u.days;
       const revenue=u.anyPriced?u.realised:list;      // realised when the job has a price, else the estimate
       const cost=a.purchaseCost||0;
       return {a,...u,list,revenue,estimated:!u.anyPriced,cost,payback:cost?revenue/cost:null};
@@ -1624,7 +1633,7 @@ function renderAssetsTab(b){
   const active=all.filter(a=>a.condition!=="retired");
   const models=new Set(active.map(a=>(a.brand+"|"+a.series).toLowerCase())).size;
   const cost=active.reduce((x,a)=>x+(a.purchaseCost||0),0);
-  const daily=active.reduce((x,a)=>x+(a.dailyRate||0),0);
+  const daily=active.reduce((x,a)=>x+rateOf(a),0);
   b.innerHTML=`
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
       ${[["Units (active fleet)",active.length+" of "+all.length],["Models",models],
@@ -1685,7 +1694,7 @@ function astRenderBody(){
           <td class="num" style="font-size:12px">${esc(a.serial||"—")}</td>
           <td>${ownerPill(a)}</td>
           <td>${condPill(a.condition)}</td>
-          <td class="t-right num">${a.dailyRate?fmtRp(a.dailyRate):"—"}</td>
+          <td class="t-right num">${rateOf(a)?`${fmtRp(rateOf(a))}${rateIsAuto(a)?` <span title="Auto: 2,5% of purchase cost — type a rate to override" style="color:var(--muted);font-size:10.5px">auto</span>`:""}`:"—"}</td>
           <td class="t-right num" style="color:var(--muted)">${a.replacement?fmtRp(a.replacement):"—"}</td>
           <td style="font-size:12px;color:var(--muted)">${esc(a.location||"—")}</td>
           <td class="t-right" style="white-space:nowrap">
@@ -1699,7 +1708,9 @@ function astRenderUtil(el){
   const cid=ACTIVE_COMPANY;
   const years=[...new Set(DB.bookings.filter(b=>b.kind==="asset").map(b=>String(b.from||"").slice(0,4)).filter(Boolean))].sort().reverse();
   if(!years.includes(String(assetUtilYear))) years.unshift(String(assetUtilYear));
-  const rows=utilRows(cid,assetUtilYear,assetOwnerFilter);
+  const allRows=utilRows(cid,assetUtilYear,assetOwnerFilter);
+  const rows=allRows.filter(r=>astMatches(r.a));       // search / brand / category apply here too
+  const filtering=rows.length!==allRows.length;
   const dim=dayCount(assetUtilYear+"-01-01",assetUtilYear+"-12-31");
   const tDays=rows.reduce((a,r)=>a+r.days,0), tRev=rows.reduce((a,r)=>a+r.revenue,0),
         tList=rows.reduce((a,r)=>a+r.list,0);
@@ -1720,11 +1731,14 @@ function astRenderUtil(el){
       ${chip("","All owners",assetOwnerFilter==="")}
       ${Object.entries(AOWNER).map(([k,v])=>chip(k,v.label,assetOwnerFilter===k)).join("")}
     </div>
+    ${filtering||assetSearch||assetBrandFilter||assetCatFilter?`<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:12.5px;color:var(--muted)">
+      Showing <strong>${rows.length}</strong> of ${allRows.length} units — totals below cover the filtered set
+      <button class="btn ghost small" onclick="astClearFilters()">clear filters</button></div>`:""}
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
       ${[["Units earning",used+" of "+rows.length],["Total days out",tDays],
          ["Revenue earned","Rp "+fmtRpShort(tRev)],
          ["Realisation vs rate card",tList?Math.round(tRev/tList*100)+"%":"—"],
-         ["Fleet utilisation",rows.length?Math.round(tDays/(rows.length*dim)*100)+"%":"—"]].map(([l,v])=>`
+         ["Fleet utilisation",rows.length?fmtPct(tDays/(rows.length*dim)*100):"—"]].map(([l,v])=>`
         <div class="card card-pad" style="flex:1;min-width:150px"><div class="eyebrow">${l}</div>
           <div class="num" style="font-size:19px;font-weight:800;margin-top:4px">${v}</div></div>`).join("")}
     </div>
@@ -1745,15 +1759,15 @@ function astRenderUtil(el){
         <th class="t-right">List value</th><th class="t-right">Earned (actual)</th><th class="t-right">Purchase cost</th><th class="t-right">Payback (lifetime)</th></tr></thead>
       <tbody>${rows.map(r=>{
         const life=assetLifetime(r.a.id);
-        const lifeRev=life.anyPriced?life.realised:(r.a.dailyRate||0)*life.days;
+        const lifeRev=life.anyPriced?life.realised:rateOf(r.a)*life.days;
         const pb=r.cost?lifeRev/r.cost:null;
-        const util=Math.round(r.days/dim*100);
+
         return `<tr class="rowlink" onclick="openAssetModal('${r.a.id}')">
           <td style="font-weight:600">${esc(r.a.code||"—")}<br><span style="font-size:11px;color:var(--muted)">${esc(r.a.brand)} ${esc(r.a.series)}</span></td>
           <td>${ownerPill(r.a)}</td>
           <td class="t-right num">${r.jobs||"—"}</td>
           <td class="t-right num" style="font-weight:600">${r.days||"—"}</td>
-          <td class="t-right num" style="color:var(--muted)">${r.days?util+"%":"—"}</td>
+          <td class="t-right num" style="color:var(--muted)">${r.days?fmtPct(r.days/dim*100):"—"}</td>
           <td class="t-right num" style="color:var(--muted)">${r.list?fmtRp(r.list):"—"}</td>
           <td class="t-right num" style="color:var(--accent-dark);font-weight:600">${r.revenue?fmtRp(Math.round(r.revenue)):"—"}${r.estimated&&r.days?` <span title="No price on the job yet — rate-card estimate" style="color:var(--amber);font-size:11px">est</span>`:""}</td>
           <td class="t-right num" style="color:var(--muted)">${r.cost?fmtRp(r.cost):"—"}</td>
@@ -1818,16 +1832,28 @@ function openAssetModal(id){
     </div>
     <div class="field-row c2">
       <div class="field"><label>Purchase date</label><input id="a_pdate" type="date" value="${esc(a?.purchaseDate||"")}"></div>
-      <div class="field"><label>Purchase cost (IDR)</label><input id="a_pcost" type="number" min="0" value="${a?.purchaseCost||""}"></div>
+      <div class="field"><label>Purchase cost (IDR)</label><input id="a_pcost" type="number" min="0" value="${a?.purchaseCost||""}" oninput="astRateHint()"></div>
     </div>
     <div class="field-row c2">
-      <div class="field"><label>Daily rental rate (IDR)</label><input id="a_rate" type="number" min="0" value="${a?.dailyRate||""}"></div>
+      <div class="field"><label>Daily rental rate (IDR)</label>
+        <input id="a_rate" type="number" min="0" value="${a?.dailyRate||""}" placeholder="auto — 2,5% of cost" oninput="astRateHint()">
+        <span id="a_rateHint" style="font-size:11.5px;color:var(--muted)"></span></div>
       <div class="field"><label>Replacement value (IDR) — charged on loss/total damage</label><input id="a_repl" type="number" min="0" value="${a?.replacement||""}"></div>
     </div>
     <div class="field"><label>Notes (service history, quirks…)</label><textarea id="a_notes" rows="2">${esc(a?.notes||"")}</textarea></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="saveAssetModal('${id||""}')">${a?"Save changes":"Add"}</button>`,true);
+  astRateHint();
   $("#a_brand").focus();
+}
+function astRateHint(){
+  const el=$("#a_rateHint"); if(!el) return;
+  const cost=Number($("#a_pcost")?.value)||0, manual=Number($("#a_rate")?.value)||0;
+  const auto=Math.round(cost*DAILY_PCT/1000)*1000;
+  el.innerHTML=manual>0
+    ? (auto?`Manual rate — the 2,5% default would be ${fmtRp(auto)}.`:"")
+    : (auto?`Leave blank to use <strong>${fmtRp(auto)}</strong>/day (2,5% of purchase cost).`
+          :`Enter a purchase cost and the daily rate defaults to 2,5% of it.`);
 }
 function astFromEq(v){ // typing/picking "Brand Series" from equipment fills series + description
   const e=DB.equipment.find(x=>(x.brand+" "+x.series).toLowerCase()===String(v).toLowerCase());
@@ -1883,6 +1909,12 @@ const DSTATE={pending:{label:"not dispatched",bg:"#EDF1EC",fg:"#5C665F"},out:{la
   partial:{label:"partly back",bg:"#F7EDDA",fg:"#B4720E"},returned:{label:"returned",bg:"var(--accent-soft)",fg:"var(--accent-dark)"}};
 const dstatePill=b=>{const x=DSTATE[bkDispatchState(b)];return `<span class="pill" style="background:${x.bg};color:${x.fg}">${x.label}</span>`;};
 const assetById=id=>DB.assets.find(a=>a.id===id);
+/* daily rental rate: a manual rate always wins; otherwise 2,5% of purchase cost,
+   rounded to the nearest 1.000 — so a unit is never worth nothing in the reports */
+const DAILY_PCT=0.025;
+const autoRate=a=>Math.round((a?.purchaseCost||0)*DAILY_PCT/1000)*1000;
+const rateOf=a=>Number(a?.dailyRate)>0?Number(a.dailyRate):autoRate(a);
+const rateIsAuto=a=>!(Number(a?.dailyRate)>0)&&autoRate(a)>0;
 /* a unit is unavailable if it is out on another booking that overlaps */
 function unitBusyOn(assetId,from,to,excludeId){
   return DB.bookings.find(b=>b.kind==="asset"&&bkActive(b)&&b.id!==excludeId&&bkOverlap(b,from,to)&&
@@ -1911,8 +1943,8 @@ const crewConflicts=(partnerId,from,to,excludeId)=>DB.bookings.filter(b=>b.kind=
   b.partnerId===partnerId&&bkOverlap(b,from,to));
 /* fleet models of the active company */
 const fleetModels=cid=>{const m={};DB.assets.filter(a=>(a.companyId||DB.companies[0]?.id)===cid&&a.condition!=="retired")
-  .forEach(a=>{const k=(a.brand+"|"+a.series).toLowerCase(); m[k]=m[k]||{brand:a.brand,series:a.series,pool:0,rate:a.dailyRate||0}; 
-    if(["good","check"].includes(a.condition||"good")) m[k].pool++; if(a.dailyRate&&!m[k].rate) m[k].rate=a.dailyRate;});
+  .forEach(a=>{const k=(a.brand+"|"+a.series).toLowerCase(); m[k]=m[k]||{brand:a.brand,series:a.series,pool:0,rate:rateOf(a)};
+    if(["good","check"].includes(a.condition||"good")) m[k].pool++; if(!m[k].rate) m[k].rate=rateOf(a);});
   return Object.values(m).sort((a,b)=>(a.brand+a.series).localeCompare(b.brand+b.series));};
 
 function renderProjectBooking(b,p){
