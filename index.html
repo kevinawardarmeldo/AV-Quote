@@ -1503,22 +1503,27 @@ function renderDashboardTab(b){
 }
 
 /* ================= ASSET REGISTER ================= */
-let assetCondFilter="", assetOwnerFilter="", assetSearch="";
-function renderAssetsTab(b){
-  const allCo=$("#astAllCo")?.checked;
-  const all=DB.assets.filter(a=>allCo&&isAdmin()||((a.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY));
-  const q=assetSearch.toLowerCase();
+let assetCondFilter="", assetOwnerFilter="", assetSearch="", assetBrandFilter="", assetCatFilter="";
+const astScope=()=>{const allCo=$("#astAllCo")?.checked;
+  return DB.assets.filter(a=>allCo&&isAdmin()||((a.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY));};
+function astFiltered(all){
+  const q=assetSearch.trim().toLowerCase();
   let list=all.filter(a=>!q||(a.code+" "+a.brand+" "+a.series+" "+a.description+" "+a.serial+" "+a.category+" "+a.location).toLowerCase().includes(q));
-  if(assetCondFilter) list=list.filter(a=>(a.condition||"good")===assetCondFilter);
+  if(assetCondFilter)  list=list.filter(a=>(a.condition||"good")===assetCondFilter);
   if(assetOwnerFilter) list=list.filter(a=>(a.owner||"company")===assetOwnerFilter);
-  list=list.slice().sort((a,b)=>(a.brand+a.series+a.code).localeCompare(b.brand+b.series+b.code));
-  // fleet stats (active, non-retired)
+  if(assetBrandFilter) list=list.filter(a=>a.brand===assetBrandFilter);
+  if(assetCatFilter)   list=list.filter(a=>(a.category||"")===assetCatFilter);
+  return list.slice().sort((a,b)=>(a.brand+a.series+a.code).localeCompare(b.brand+b.series+b.code));
+}
+function renderAssetsTab(b){
+  const all=astScope();
+  const brands=[...new Set(all.map(a=>a.brand).filter(Boolean))].sort();
+  const cats=[...new Set(all.map(a=>a.category).filter(Boolean))].sort();
+  // fleet stats — always the whole fleet, not the filtered view
   const active=all.filter(a=>a.condition!=="retired");
   const models=new Set(active.map(a=>(a.brand+"|"+a.series).toLowerCase())).size;
   const cost=active.reduce((x,a)=>x+(a.purchaseCost||0),0);
   const daily=active.reduce((x,a)=>x+(a.dailyRate||0),0);
-  const chip=(set,k,label,n,active2)=>`<button class="btn small" style="border-radius:99px;${active2?"background:var(--ink);color:#fff;border-color:var(--ink)":""}"
-    onclick="${set}='${k}';render()">${label}${n!==undefined?` <span class="num" style="opacity:.7">${n}</span>`:""}</button>`;
   b.innerHTML=`
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
       ${[["Units (active fleet)",active.length+" of "+all.length],["Models",models],
@@ -1527,19 +1532,41 @@ function renderAssetsTab(b){
           <div class="num" style="font-size:19px;font-weight:800;margin-top:4px">${v}</div></div>`).join("")}
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-      <input placeholder="Search code, model, serial, location…" value="${esc(assetSearch)}"
-        oninput="assetSearch=this.value;render()" style="flex:1;min-width:220px;border:1px solid var(--line);border-radius:8px;padding:9px 12px">
+      <input id="astSearch" placeholder="Search code, model, serial, location…" value="${esc(assetSearch)}"
+        oninput="assetSearch=this.value;astRenderBody()" style="flex:1;min-width:200px;border:1px solid var(--line);border-radius:8px;padding:9px 12px">
+      <select id="astBrand" onchange="assetBrandFilter=this.value;astRenderBody()" style="border:1px solid var(--line);border-radius:8px;padding:9px 10px;min-width:130px">
+        <option value="">All brands</option>
+        ${brands.map(x=>`<option value="${esc(x)}" ${assetBrandFilter===x?"selected":""}>${esc(x)}</option>`).join("")}
+      </select>
+      <select id="astCat" onchange="assetCatFilter=this.value;astRenderBody()" style="border:1px solid var(--line);border-radius:8px;padding:9px 10px;min-width:140px">
+        <option value="">All categories</option>
+        ${cats.map(x=>`<option value="${esc(x)}" ${assetCatFilter===x?"selected":""}>${esc(x)}</option>`).join("")}
+      </select>
       ${isAdmin()?`<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:8px 10px">
-        <input type="checkbox" id="astAllCo" ${allCo?"checked":""} onchange="render()"> all companies</label>`:""}
+        <input type="checkbox" id="astAllCo" ${$("#astAllCo")?.checked?"checked":""} onchange="render()"> all companies</label>`:""}
     </div>
+    <div id="astBody"></div>`;
+  astRenderBody();
+}
+/* repaints only the chips + table, so typing in the search box never loses focus */
+function astRenderBody(){
+  const el=$("#astBody"); if(!el) return;
+  const all=astScope(), list=astFiltered(all);
+  const chip=(setter,k,label,n,on)=>`<button class="btn small" style="border-radius:99px;${on?"background:var(--ink);color:#fff;border-color:var(--ink)":""}"
+    onclick="${setter}='${k}';astRenderBody()">${label}${n!==undefined?` <span class="num" style="opacity:.7">${n}</span>`:""}</button>`;
+  const anyFilter=assetSearch||assetCondFilter||assetOwnerFilter||assetBrandFilter||assetCatFilter;
+  el.innerHTML=`
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
       ${chip("assetOwnerFilter","","All owners",all.length,assetOwnerFilter==="")}
       ${Object.entries(AOWNER).map(([k,v])=>{const n=all.filter(a=>(a.owner||"company")===k).length;return n?chip("assetOwnerFilter",k,v.label,n,assetOwnerFilter===k):"";}).join("")}
     </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
       ${chip("assetCondFilter","","All conditions",all.length,assetCondFilter==="")}
       ${Object.entries(ACOND).map(([k,v])=>{const n=all.filter(a=>(a.condition||"good")===k).length;return n?chip("assetCondFilter",k,v.label,n,assetCondFilter===k):"";}).join("")}
     </div>
+    ${anyFilter?`<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:12.5px;color:var(--muted)">
+      Showing <strong>${list.length}</strong> of ${all.length}
+      <button class="btn ghost small" onclick="astClearFilters()">clear filters</button></div>`:""}
     ${list.length?`<div class="card" style="overflow-x:auto"><table class="grid" style="min-width:960px">
       <thead><tr><th style="width:90px">Code</th><th>Model</th><th style="width:130px">Serial</th><th style="width:120px">Owner</th><th style="width:110px">Condition</th>
         <th class="t-right" style="width:110px">Daily rate</th><th class="t-right" style="width:120px">Replacement</th><th style="width:130px">Location</th><th style="width:110px"></th></tr></thead>
@@ -1560,7 +1587,13 @@ function renderAssetsTab(b){
       </tbody></table></div>`
     :`<div class="card"><div class="empty"><span class="eyebrow">${all.length?"No assets match the filter":"No assets yet"}</span>${all.length?"":"Register every unit you own — speakers, mixers, mics, stands — with serial number, owner (company vs your personal lease gear) and rental rates. This becomes the base for bookings, dispatch and utilisation."}</div></div>`}`;
 }
-
+function astClearFilters(){
+  assetSearch=""; assetCondFilter=""; assetOwnerFilter=""; assetBrandFilter=""; assetCatFilter="";
+  const i=$("#astSearch"); if(i) i.value="";
+  const b1=$("#astBrand"); if(b1) b1.value="";
+  const c1=$("#astCat"); if(c1) c1.value="";
+  astRenderBody();
+}
 function nextAssetCode(){
   const codes=DB.assets.filter(a=>(a.companyId||DB.companies[0]?.id)===ACTIVE_COMPANY).map(a=>a.code).filter(Boolean);
   let best=0;
