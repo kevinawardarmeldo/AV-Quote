@@ -1783,13 +1783,45 @@ function renderProjectBooking(b,p){
 }
 async function bkSet(id,k,v){ const x=DB.bookings.find(b=>b.id===id); x[k]=v; render(); await persist(saveBookings); }
 async function bkDelete(id){ if(!confirm("Delete this booking line?"))return; DB.bookings=DB.bookings.filter(b=>b.id!==id); render(); await persist(saveBookings,"Booking removed"); }
+let BKMODELS=[], BKFILT=[], bkPick=-1;
+function bkFilter(){
+  const el=$("#bk_list"); if(!el) return;
+  const q=($("#bk_search")?.value||"").trim().toLowerCase();
+  const terms=q.split(/\s+/).filter(Boolean);
+  BKFILT=BKMODELS.map((m,i)=>({m,i})).filter(({m})=>{
+    const hay=(m.brand+" "+m.series).toLowerCase();
+    return terms.every(t=>hay.includes(t));
+  });
+  const sel=$("#bk_selLine");
+  if(sel){ const c=BKMODELS[bkPick];
+    sel.innerHTML=c?`Selected: <strong>${esc(c.brand)} ${esc(c.series)}</strong> — ${c.pool} bookable${c.rate?" · "+fmtRp(c.rate)+"/day":""}`
+      :`<span style="color:var(--muted)">Nothing selected yet — type to search, then click a model.</span>`; }
+  el.innerHTML=BKFILT.length?BKFILT.slice(0,80).map(({m,i})=>`
+    <div onclick="bkChoose(${i})" style="display:flex;justify-content:space-between;gap:10px;padding:8px 11px;cursor:pointer;border-bottom:1px solid var(--line);
+      ${bkPick===i?"background:var(--accent-soft)":""}">
+      <span style="font-weight:${bkPick===i?"700":"600"}">${esc(m.brand)} ${esc(m.series)}</span>
+      <span class="num" style="font-size:12px;color:${m.pool?"var(--muted)":"var(--red)"};white-space:nowrap">${m.pool} bookable${m.rate?" · "+fmtRp(m.rate):""}</span>
+    </div>`).join("")
+    :`<div style="padding:14px;color:var(--muted);font-size:13px">No model matches “${esc(q)}”.</div>`;
+}
+function bkChoose(i){ bkPick=i; bkFilter(); }
+function bkKey(e){
+  if(!BKFILT.length) return;
+  const pos=BKFILT.findIndex(x=>x.i===bkPick);
+  if(e.key==="ArrowDown"){ e.preventDefault(); bkChoose(BKFILT[Math.min(BKFILT.length-1,pos+1)].i); }
+  else if(e.key==="ArrowUp"){ e.preventDefault(); bkChoose(BKFILT[Math.max(0,pos<0?0:pos-1)].i); }
+  else if(e.key==="Enter"){ e.preventDefault(); if(bkPick<0) bkChoose(BKFILT[0].i); }
+}
 function openBkAsset(pid){
   const p=getProject(pid), cid=p.companyId||DB.companies[0]?.id;
   const models=fleetModels(cid);
   if(!models.length) return alert("No assets in the register yet — add the fleet first (Assets tab).");
+  BKMODELS=models; BKFILT=models.map((m,i)=>({m,i})); bkPick=-1;
   openModal("Book equipment",`
-    <div class="field"><label>Model</label>
-      <select id="bk_model">${models.map((m,i)=>`<option value="${i}">${esc(m.brand)} ${esc(m.series)} — ${m.pool} bookable</option>`).join("")}</select></div>
+    <div class="field"><label>Model — type to search (${models.length} in the fleet)</label>
+      <input id="bk_search" placeholder="e.g. thump, sm58, x32…" autocomplete="off" oninput="bkFilter()" onkeydown="bkKey(event)">
+      <div id="bk_list" style="max-height:210px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;margin-top:6px"></div>
+      <div id="bk_selLine" style="font-size:12.5px;margin-top:6px"></div></div>
     <div class="field-row c3">
       <div class="field"><label>Qty</label><input id="bk_qty" type="number" min="1" value="1"></div>
       <div class="field"><label>From</label><input id="bk_from" type="date" value="${esc(p.mobDate||p.eventDate||"")}"></div>
@@ -1799,10 +1831,13 @@ function openBkAsset(pid){
     <div class="field"><label>Notes</label><input id="bk_notes" placeholder="e.g. FOH mains"></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="doBkAsset('${pid}')">Book</button>`);
+  bkFilter();
+  $("#bk_search")?.focus();
 }
 async function doBkAsset(pid){
   const p=getProject(pid), cid=p.companyId||DB.companies[0]?.id;
-  const m=fleetModels(cid)[Number($("#bk_model").value)];
+  const m=BKMODELS[bkPick];
+  if(!m) return alert("Pick a model first — type to search, then click one from the list.");
   const from=$("#bk_from").value, to=$("#bk_to").value;
   if(!from||!to||to<from) return alert("Set a valid date range (To can equal From for a one-day job).");
   const rec={id:uid(),projectId:pid,kind:"asset",brand:m.brand,series:m.series,partnerId:"",qty:Math.max(1,Number($("#bk_qty").value)||1),
