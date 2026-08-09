@@ -251,7 +251,7 @@ const CONFIG = {
 
 const SHEETS = {
   Equipment:    ["ID","Brand","Series/Type","Description","Category","Unit","Price","Budget Price","Price Updated","Distributor","Companies","Budget Prices","Sell Prices"],
-  Projects:     ["ID","Name","Location","Client","Created","Summary Notes","Signature","Company ID","Client ID","Engineers","Status","Type","Modules","Mob Date","Event Date","Demob Date"],
+  Projects:     ["ID","Name","Location","Client","Created","Summary Notes","Signature","Company ID","Client ID","Engineers","Status","Type","Modules","Mob Date","Event Date","Demob Date","Equip Revenue"],
   Quotations:   ["ID","ProjectID","QuoteNumber","Title","Date","Tax","DataJSON","Updated"],
   NoteTemplates:["ID","Name","Content"],
   SignaturePresets:["ID","Name","JSON"],
@@ -439,7 +439,8 @@ async function loadAll(){
       sig:{prepName:sig.prepName||"",prepTitle:sig.prepTitle||"",apprName:sig.apprName||"",apprCompany:sig.apprCompany||""},
       companyId:r[7]||"",clientId:r[8]||"",engineers:(r[9]||"").split(",").filter(Boolean),status:r[10]||"onquote",
       ptype:r[11]||"installation",modules:(()=>{try{return r[12]?JSON.parse(r[12]):null}catch(e){return null}})(),
-      mobDate:r[13]||"",eventDate:r[14]||"",demobDate:r[15]||""};
+      mobDate:r[13]||"",eventDate:r[14]||"",demobDate:r[15]||"",
+      equipRev:r[16]===""||r[16]===undefined?null:Number(r[16])};
   });
   DB.quotations=qu.filter(r=>r[0]).map(r=>{
     let d={}; try{d=JSON.parse(r[6]||"{}")}catch(e){}
@@ -534,7 +535,7 @@ async function saveTab(tab,rows){
   snapTab(tab,merged);
 }
 const saveEquipment=()=>saveTab("Equipment",DB.equipment.map(e=>[e.id,e.brand,e.series,e.description,e.category,e.unit,e.price,e.cost||0,e.priceUpdated||"",e.distributor||"",(e.companies||[]).join(","),JSON.stringify(e.costs||{}),JSON.stringify(e.prices||{})]));
-const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||"",JSON.stringify(p.sig||{}),p.companyId||"",p.clientId||"",(p.engineers||[]).join(","),p.status||"onquote",p.ptype||"installation",p.modules?JSON.stringify(p.modules):"",p.mobDate||"",p.eventDate||"",p.demobDate||""]));
+const saveProjects =()=>saveTab("Projects",DB.projects.map(p=>[p.id,p.name,p.location,p.client,p.created,p.summaryNotes||"",JSON.stringify(p.sig||{}),p.companyId||"",p.clientId||"",(p.engineers||[]).join(","),p.status||"onquote",p.ptype||"installation",p.modules?JSON.stringify(p.modules):"",p.mobDate||"",p.eventDate||"",p.demobDate||"",p.equipRev===null||p.equipRev===undefined?"":p.equipRev]));
 const saveSigPresets=()=>saveTab("SignaturePresets",DB.sigPresets.map(t=>[t.id,t.name,JSON.stringify({prepName:t.prepName||"",prepTitle:t.prepTitle||"",apprName:t.apprName||"",apprCompany:t.apprCompany||""})]));
 const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projectId,q.quoteNumber,q.title,q.date,q.tax?"TRUE":"FALSE",JSON.stringify({sections:q.sections,notes:q.notes,kind:q.kind||"quote",discount:q.discount||{type:"percent",value:0},extra:q.extra||{}}),new Date().toISOString()]));
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
@@ -1516,6 +1517,56 @@ function astFiltered(all){
   if(assetCatFilter)   list=list.filter(a=>(a.category||"")===assetCatFilter);
   return list.slice().sort((a,b)=>(a.brand+a.series+a.code).localeCompare(b.brand+b.series+b.code));
 }
+/* ---------- realised equipment revenue per project ----------
+   Chain: package price (primary quote/invoice) − job costs (JCS: crew, transport, sub-rental)
+        = equipment revenue, then split across dispatched units weighted by rate-card value.
+   A manual override on the project wins over the derived figure. */
+function projPackageValue(pid){
+  const inv=countable(kindQuotes(pid,"invoice")).reduce((a,q)=>a+quoteGrand(q),0);
+  if(inv) return {value:inv,basis:"invoiced"};
+  const so=countable(kindQuotes(pid,"so")).reduce((a,q)=>a+quoteGrand(q),0);
+  if(so) return {value:so,basis:"sales order"};
+  const q=countable(kindQuotes(pid,"quote")).reduce((a,x)=>a+quoteGrand(x),0);
+  return {value:q,basis:q?"quoted":"none"};
+}
+const projJobCosts=pid=>countable(kindQuotes(pid,"jcs")).reduce((a,q)=>a+quoteGrand(q),0);
+function projEquipRevenue(pid){
+  const p=getProject(pid);
+  const pkg=projPackageValue(pid), jcs=projJobCosts(pid);
+  const derived=Math.max(0,pkg.value-jcs);
+  if(p&&p.equipRev!==null&&p.equipRev!==undefined&&p.equipRev!=="")
+    return {value:Number(p.equipRev),derived,pkg,jcs,manual:true};
+  return {value:derived,derived,pkg,jcs,manual:false};
+}
+/* list (rate-card) value a unit contributed to one booking */
+const unitListValue=(a,days)=>(a?.dailyRate||0)*days;
+/* every dispatched unit-stint on a project, with its list value */
+function projUnitStints(pid,year){
+  const out=[];
+  DB.bookings.filter(b=>b.projectId===pid&&b.kind==="asset"&&bkActive(b)).forEach(b=>{
+    bkUnits(b).forEach(u=>{
+      const from=u.out||b.from, to=u.back||b.to;
+      if(!from||!to) return;
+      if(year&&!String(from).startsWith(String(year))) return;
+      const a=assetById(u.assetId); if(!a) return;
+      const days=dayCount(from,to); if(days<=0) return;
+      out.push({assetId:u.assetId,a,days,list:unitListValue(a,days),from,to});
+    });
+  });
+  return out;
+}
+/* realised revenue per asset on a project — weighted by rate-card share */
+function projAllocation(pid,year){
+  const stints=projUnitStints(pid,year);
+  const totalList=stints.reduce((x,s)=>x+s.list,0);
+  const er=projEquipRevenue(pid);
+  const alloc={};
+  stints.forEach(s=>{
+    const share=totalList>0?s.list/totalList:(stints.length?1/stints.length:0);
+    alloc[s.assetId]=(alloc[s.assetId]||0)+er.value*share;
+  });
+  return {alloc,stints,totalList,equipRev:er,realisation:totalList>0?er.value/totalList:null};
+}
 /* ---------- utilisation & payback ----------
    Days out come from DISPATCHED units — a booking with no units assigned can't be
    attributed to any serial, so it counts nothing (those are surfaced separately).
@@ -1524,7 +1575,8 @@ function astFiltered(all){
 const dayCount=(from,to)=>{ if(!from||!to||to<from) return 0;
   return Math.round((new Date(to+"T00:00:00")-new Date(from+"T00:00:00"))/86400000)+1; };
 function assetUsage(assetId,year){
-  let days=0, jobs=0, lastOut="";
+  let days=0, jobs=0, lastOut="", realised=0, listVal=0, anyPriced=false;
+  const seen=new Set();
   DB.bookings.forEach(b=>{
     if(b.kind!=="asset"||!bkActive(b)) return;
     bkUnits(b).forEach(u=>{
@@ -1533,18 +1585,27 @@ function assetUsage(assetId,year){
       if(!from||!to) return;
       if(year&&!String(from).startsWith(String(year))) return;
       const d=dayCount(from,to);
-      if(d>0){ days+=d; jobs++; if(from>lastOut) lastOut=from; }
+      if(d<=0) return;
+      days+=d; jobs++; if(from>lastOut) lastOut=from;
+      listVal+=unitListValue(assetById(assetId),d);
+      if(!seen.has(b.projectId)){        // allocate once per project, not per stint
+        seen.add(b.projectId);
+        const al=projAllocation(b.projectId,year);
+        realised+=al.alloc[assetId]||0;
+        if(al.equipRev.pkg.basis!=="none") anyPriced=true;
+      }
     });
   });
-  return {days,jobs,lastOut};
+  return {days,jobs,lastOut,realised,listVal,anyPriced};
 }
 function utilRows(cid,year,ownerFilter){
   return DB.assets.filter(a=>(a.companyId||DB.companies[0]?.id)===cid&&(!ownerFilter||(a.owner||"company")===ownerFilter))
     .map(a=>{
       const u=assetUsage(a.id,year);
-      const revenue=(a.dailyRate||0)*u.days;
+      const list=u.listVal||(a.dailyRate||0)*u.days;
+      const revenue=u.anyPriced?u.realised:list;      // realised when the job has a price, else the estimate
       const cost=a.purchaseCost||0;
-      return {a,...u,revenue,cost,payback:cost?revenue/cost:null};
+      return {a,...u,list,revenue,estimated:!u.anyPriced,cost,payback:cost?revenue/cost:null};
     }).sort((x,y)=>y.revenue-x.revenue);
 }
 /* lifetime figures ignore the year filter — payback is a lifetime question */
@@ -1635,7 +1696,8 @@ function astRenderUtil(el){
   if(!years.includes(String(assetUtilYear))) years.unshift(String(assetUtilYear));
   const rows=utilRows(cid,assetUtilYear,assetOwnerFilter);
   const dim=dayCount(assetUtilYear+"-01-01",assetUtilYear+"-12-31");
-  const tDays=rows.reduce((a,r)=>a+r.days,0), tRev=rows.reduce((a,r)=>a+r.revenue,0);
+  const tDays=rows.reduce((a,r)=>a+r.days,0), tRev=rows.reduce((a,r)=>a+r.revenue,0),
+        tList=rows.reduce((a,r)=>a+r.list,0);
   const fleetCost=rows.reduce((a,r)=>a+r.cost,0);
   const used=rows.filter(r=>r.days>0).length, idle=rows.filter(r=>!r.days&&r.a.condition!=="retired");
   // lease fees: what the company owes Kevin for personally-owned gear
@@ -1655,7 +1717,8 @@ function astRenderUtil(el){
     </div>
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
       ${[["Units earning",used+" of "+rows.length],["Total days out",tDays],
-         ["Rental value earned","Rp "+fmtRpShort(tRev)],
+         ["Revenue earned","Rp "+fmtRpShort(tRev)],
+         ["Realisation vs rate card",tList?Math.round(tRev/tList*100)+"%":"—"],
          ["Fleet utilisation",rows.length?Math.round(tDays/(rows.length*dim)*100)+"%":"—"]].map(([l,v])=>`
         <div class="card card-pad" style="flex:1;min-width:150px"><div class="eyebrow">${l}</div>
           <div class="num" style="font-size:19px;font-weight:800;margin-top:4px">${v}</div></div>`).join("")}
@@ -1663,8 +1726,8 @@ function astRenderUtil(el){
     ${leaseRev?`<div class="card card-pad" style="margin-bottom:16px;border-left:3px solid #2C4A6E">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline">
         <div><span class="eyebrow" style="color:#2C4A6E">Lease fees — personally-owned gear used by the company, ${assetUtilYear}</span>
-          <div style="font-size:12.5px;color:var(--muted);margin-top:3px">${lease.filter(r=>r.days).length} unit(s) · ${leaseDays} unit-days at their daily rates</div></div>
-        <div class="num" style="font-size:22px;font-weight:800;color:#2C4A6E">${fmtRp(leaseRev)}</div>
+          <div style="font-size:12.5px;color:var(--muted);margin-top:3px">${lease.filter(r=>r.days).length} unit(s) · ${leaseDays} unit-days · share of what those jobs actually charged</div></div>
+        <div class="num" style="font-size:22px;font-weight:800;color:#2C4A6E">${fmtRp(Math.round(leaseRev))}</div>
       </div>
       <div style="font-size:11.5px;color:var(--muted);margin-top:8px">Basis for what the company owes you under the lease arrangement — agree the actual rate with your partner; this is the earning these units generated.</div>
     </div>`:""}
@@ -1674,9 +1737,10 @@ function astRenderUtil(el){
       <div style="font-size:11.5px;color:var(--muted);margin-top:8px">Their days aren't counted here — utilisation only credits units actually dispatched. Assign units on the booking to include them.</div></div>`:""}
     ${rows.length?`<div class="card" style="overflow-x:auto"><table class="grid" style="min-width:940px">
       <thead><tr><th>Unit</th><th>Owner</th><th class="t-right">Jobs</th><th class="t-right">Days out</th><th class="t-right">Util %</th>
-        <th class="t-right">Rental value</th><th class="t-right">Purchase cost</th><th class="t-right">Payback (lifetime)</th></tr></thead>
+        <th class="t-right">List value</th><th class="t-right">Earned (actual)</th><th class="t-right">Purchase cost</th><th class="t-right">Payback (lifetime)</th></tr></thead>
       <tbody>${rows.map(r=>{
-        const life=assetLifetime(r.a.id), lifeRev=(r.a.dailyRate||0)*life.days;
+        const life=assetLifetime(r.a.id);
+        const lifeRev=life.anyPriced?life.realised:(r.a.dailyRate||0)*life.days;
         const pb=r.cost?lifeRev/r.cost:null;
         const util=Math.round(r.days/dim*100);
         return `<tr class="rowlink" onclick="openAssetModal('${r.a.id}')">
@@ -1685,21 +1749,23 @@ function astRenderUtil(el){
           <td class="t-right num">${r.jobs||"—"}</td>
           <td class="t-right num" style="font-weight:600">${r.days||"—"}</td>
           <td class="t-right num" style="color:var(--muted)">${r.days?util+"%":"—"}</td>
-          <td class="t-right num" style="color:var(--accent-dark);font-weight:600">${r.revenue?fmtRp(r.revenue):"—"}</td>
+          <td class="t-right num" style="color:var(--muted)">${r.list?fmtRp(r.list):"—"}</td>
+          <td class="t-right num" style="color:var(--accent-dark);font-weight:600">${r.revenue?fmtRp(Math.round(r.revenue)):"—"}${r.estimated&&r.days?` <span title="No price on the job yet — rate-card estimate" style="color:var(--amber);font-size:11px">est</span>`:""}</td>
           <td class="t-right num" style="color:var(--muted)">${r.cost?fmtRp(r.cost):"—"}</td>
           <td class="t-right num" style="font-weight:700;color:${pb===null?"var(--muted)":pb>=1?"var(--accent-dark)":"var(--amber)"}">
             ${pb===null?"—":Math.round(pb*100)+"%"}</td></tr>`;}).join("")}
       </tbody>
       <tfoot><tr style="border-top:2px solid var(--line)"><td colspan="3" style="font-weight:700">Total</td>
         <td class="t-right num" style="font-weight:700">${tDays}</td><td></td>
-        <td class="t-right num" style="font-weight:700;color:var(--accent-dark)">${fmtRp(tRev)}</td>
+        <td class="t-right num" style="color:var(--muted)">${fmtRp(tList)}</td>
+        <td class="t-right num" style="font-weight:700;color:var(--accent-dark)">${fmtRp(Math.round(tRev))}</td>
         <td class="t-right num">${fmtRp(fleetCost)}</td><td></td></tr></tfoot></table></div>
     ${idle.length?`<div class="card card-pad" style="margin-top:14px">
       <span class="eyebrow" style="color:var(--amber)">Earned nothing in ${assetUtilYear} — ${idle.length} unit(s)</span>
       <div style="font-size:12.5px;margin-top:6px;line-height:1.7">${idle.slice(0,40).map(r=>`${esc(r.a.code||"?")} <span style="color:var(--muted)">${esc(r.a.brand)} ${esc(r.a.series)}</span>`).join(" · ")}</div>
       <div style="font-size:11.5px;color:var(--muted);margin-top:8px">Candidates to sell, or to promote in your packages.</div></div>`:""}`
     :`<div class="card"><div class="empty"><span class="eyebrow">Nothing to report yet</span>Utilisation builds up as you dispatch equipment on bookings. Make sure assets have a purchase cost and daily rate so payback can be calculated.</div></div>`}
-    <p style="font-size:11.5px;color:var(--muted);margin-top:12px">Rental value = the unit's daily rate x days out — an estimate of what each unit earned, not invoiced revenue. Days come from actual dispatch dates where recorded, otherwise the booked range.</p>`;
+    <p style="font-size:11.5px;color:var(--muted);margin-top:12px"><strong>Earned (actual)</strong> = each job's equipment revenue (package price − job costs) split across the units dispatched, weighted by their rate-card value. <strong>List value</strong> is what the rate card would have charged; the gap between them is your discounting. Rows marked <em>est</em> have no price on the job yet, so they fall back to list.</p>`;
 }
 function astClearFilters(){
   assetSearch=""; assetCondFilter=""; assetOwnerFilter=""; assetBrandFilter=""; assetCatFilter="";
@@ -1893,6 +1959,30 @@ function renderProjectBooking(b,p){
           :`No project schedule yet — <button class="btn ghost small" onclick="openProjectModal('${p.id}')">set mob / event / demob dates</button> and bookings will prefill.`}
       </div>
       <button class="btn small" onclick="openAvailability('${cid}','${esc(p.mobDate||p.eventDate||"")}','${esc(p.demobDate||p.eventDate||"")}')">🗓 Check availability</button></div>
+    ${(()=>{
+      const al=projAllocation(p.id,null), er=al.equipRev;
+      if(er.pkg.basis==="none"&&!al.stints.length) return "";
+      const pct=al.realisation===null?null:Math.round(al.realisation*100);
+      return `<div class="card card-pad" style="margin-bottom:16px;border-left:3px solid var(--accent-dark)">
+        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;align-items:baseline">
+          <span class="eyebrow">Equipment revenue — drives payback in the asset register</span>
+          <div class="num" style="font-size:20px;font-weight:800;color:var(--accent-dark)">${fmtRp(Math.round(er.value))}</div>
+        </div>
+        <div style="font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.8">
+          Package (${er.pkg.basis}) <span class="num">${fmtRp(er.pkg.value)}</span>
+          − job costs <span class="num">${fmtRp(er.jcs)}</span>
+          = <strong class="num" style="color:var(--ink)">${fmtRp(er.derived)}</strong>
+          ${er.manual?`<br><span style="color:var(--amber)">Overridden manually — derived figure would be ${fmtRp(er.derived)}.</span>`:""}
+          ${al.stints.length?`<br>Split across ${al.stints.length} dispatched unit(s), weighted by rate card${pct!==null?` · realisation <strong>${pct}%</strong> of the ${fmtRp(al.totalList)} rate-card value`:""}.`
+            :`<br><span style="color:var(--amber)">No units dispatched yet — nothing to allocate to.</span>`}
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:12px;color:var(--muted)">Override</label>
+          <input type="number" min="0" class="inline-input num" style="width:150px" placeholder="auto"
+            value="${p.equipRev===null||p.equipRev===undefined?"":p.equipRev}" onchange="projSetEquipRev('${p.id}',this.value)">
+          ${er.manual?`<button class="btn ghost small" onclick="projSetEquipRev('${p.id}','')">use derived</button>`:""}
+        </div></div>`;})()}
+
     <div class="card" style="margin-bottom:16px">
       <div class="card-pad" style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px">
         <span class="eyebrow">Equipment bookings — by model, serials assigned at dispatch</span>
@@ -1911,6 +2001,11 @@ function renderProjectBooking(b,p){
         <tbody>${cLines.map(crewRow).join("")}</tbody></table></div>`
       :`<div class="empty" style="padding:18px">No crew booked yet.${crew.length?"":" Tag partners as Crew / Operator first."}</div>`}
     </div>`;
+}
+async function projSetEquipRev(pid,v){
+  const p=getProject(pid);
+  p.equipRev=(v===""||v===null||v===undefined)?null:Math.max(0,Number(v)||0);
+  render(); await persist(saveProjects,p.equipRev===null?"Back to the derived figure":"Equipment revenue overridden");
 }
 async function bkSet(id,k,v){ const x=DB.bookings.find(b=>b.id===id); x[k]=v; render(); await persist(saveBookings); }
 async function bkDelete(id){ if(!confirm("Delete this booking line?"))return; DB.bookings=DB.bookings.filter(b=>b.id!==id); render(); await persist(saveBookings,"Booking removed"); }
