@@ -1522,12 +1522,17 @@ function astFiltered(all){
         = equipment revenue, then split across dispatched units weighted by rate-card value.
    A manual override on the project wins over the derived figure. */
 function projPackageValue(pid){
+  // cash actually received is the truest basis — clients withhold PPh 23 and bank fees
+  const recs=kindQuotes(pid,"receipt");
+  const cash=recs.reduce((a,q)=>a+recCash(q),0);
+  const withheld=recs.reduce((a,q)=>a+recDeductTotal(q),0);
   const inv=countable(kindQuotes(pid,"invoice")).reduce((a,q)=>a+quoteGrand(q),0);
-  if(inv) return {value:inv,basis:"invoiced"};
+  if(cash) return {value:cash,basis:"received",withheld,invoiced:inv,receipts:recs.length};
+  if(inv) return {value:inv,basis:"invoiced (not yet paid)",withheld:0,invoiced:inv,receipts:0};
   const so=countable(kindQuotes(pid,"so")).reduce((a,q)=>a+quoteGrand(q),0);
-  if(so) return {value:so,basis:"sales order"};
+  if(so) return {value:so,basis:"sales order",withheld:0,invoiced:0,receipts:0};
   const q=countable(kindQuotes(pid,"quote")).reduce((a,x)=>a+quoteGrand(x),0);
-  return {value:q,basis:q?"quoted":"none"};
+  return {value:q,basis:q?"quoted":"none",withheld:0,invoiced:0,receipts:0};
 }
 const projJobCosts=pid=>countable(kindQuotes(pid,"jcs")).reduce((a,q)=>a+quoteGrand(q),0);
 function projEquipRevenue(pid){
@@ -1972,6 +1977,9 @@ function renderProjectBooking(b,p){
           Package (${er.pkg.basis}) <span class="num">${fmtRp(er.pkg.value)}</span>
           − job costs <span class="num">${fmtRp(er.jcs)}</span>
           = <strong class="num" style="color:var(--ink)">${fmtRp(er.derived)}</strong>
+          ${er.pkg.withheld?`<br><span style="color:var(--amber)">Rp ${fmtRp(er.pkg.withheld).replace("Rp ","")} was withheld by the client (PPh / fees) and is not counted here.</span>`:""}
+          ${er.pkg.basis==="received"&&er.pkg.invoiced&&(er.pkg.value+er.pkg.withheld)<er.pkg.invoiced
+            ? `<br><span style="color:var(--amber)">Part-paid: ${fmtRp(er.pkg.value+er.pkg.withheld)} of ${fmtRp(er.pkg.invoiced)} invoiced — this figure rises as the rest comes in.</span>`:""}
           ${er.manual?`<br><span style="color:var(--amber)">Overridden manually — derived figure would be ${fmtRp(er.derived)}.</span>`:""}
           ${al.stints.length?`<br>Split across ${al.stints.length} dispatched unit(s), weighted by rate card${pct!==null?` · realisation <strong>${pct}%</strong> of the ${fmtRp(al.totalList)} rate-card value`:""}.`
             :`<br><span style="color:var(--amber)">No units dispatched yet — nothing to allocate to.</span>`}
