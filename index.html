@@ -259,9 +259,9 @@ const SHEETS = {
   Companies:    ["ID","Name","Tagline","Address","Contact","Bank Details","Accounts"],
   Users:        ["ID","Email","Roles","Companies","Locked"],
   Clients:      ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies"],
-  Assets:       ["ID","Asset Code","Brand","Series/Type","Description","Category","Serial Number","Owner","Owner Note","Condition","Location","Purchase Date","Purchase Cost","Daily Rate","Replacement Value","Company ID","Notes","Equipment ID"],
+  Assets:       ["ID","Asset Code","Brand","Series/Type","Description","Category","Serial Number","Owner","Owner Note","Condition","Location","Purchase Date","Purchase Cost","Daily Rate","Replacement Value","Company ID","Notes","Equipment ID","Files"],
   Bookings:     ["ID","Project ID","Kind","Brand","Series","Partner ID","Qty","From","To","Notes","Status","Units"],
-  Transactions: ["ID","Company ID","Date","Direction","Category","Description","Amount","Account","To Account","Payee","Project ID","Reference","Notes","Recurring"]
+  Transactions: ["ID","Company ID","Date","Direction","Category","Description","Amount","Account","To Account","Payee","Project ID","Reference","Notes","Recurring","Files"]
 };
 
 /* ================= state ================= */
@@ -292,7 +292,7 @@ function initAuth(){
       clearInterval(timer);
       tokenClient=google.accounts.oauth2.initTokenClient({
         client_id:CONFIG.CLIENT_ID,
-        scope:"https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
+        scope:"https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
         callback:()=>{}
       });
     }
@@ -459,13 +459,15 @@ async function loadAll(){
   DB.assets=(ast||[]).filter(r=>r[0]).map(r=>({id:r[0],code:r[1]||"",brand:r[2]||"",series:r[3]||"",description:r[4]||"",category:r[5]||"",
     serial:r[6]||"",owner:r[7]||"company",ownerNote:r[8]||"",condition:r[9]||"good",location:r[10]||"",
     purchaseDate:r[11]||"",purchaseCost:Number(r[12])||0,dailyRate:Number(r[13])||0,replacement:Number(r[14])||0,
-    companyId:r[15]||"",notes:r[16]||"",equipmentId:r[17]||""}));
+    companyId:r[15]||"",notes:r[16]||"",equipmentId:r[17]||"",
+    files:(()=>{try{return r[18]?JSON.parse(r[18]):[]}catch(e){return []}})()}));
   DB.bookings=(bk||[]).filter(r=>r[0]).map(r=>({id:r[0],projectId:r[1]||"",kind:r[2]||"asset",brand:r[3]||"",series:r[4]||"",
     partnerId:r[5]||"",qty:Number(r[6])||1,from:r[7]||"",to:r[8]||"",notes:r[9]||"",status:r[10]||"reserved",
     units:(()=>{try{return r[11]?JSON.parse(r[11]):[]}catch(e){return []}})()}));
   DB.txns=(tx||[]).filter(r=>r[0]).map(r=>({id:r[0],companyId:r[1]||"",date:r[2]||"",dir:r[3]||"out",category:r[4]||"",
     description:r[5]||"",amount:Number(r[6])||0,account:r[7]||"",toAccount:r[8]||"",payee:r[9]||"",
-    projectId:r[10]||"",reference:r[11]||"",notes:r[12]||"",recurring:String(r[13]||"")==="1"}));
+    projectId:r[10]||"",reference:r[11]||"",notes:r[12]||"",recurring:String(r[13]||"")==="1",
+    files:(()=>{try{return r[14]?JSON.parse(r[14]):[]}catch(e){return []}})()}));
 }
 /* ---------------------------------------------------------------
    Concurrency-safe saving.
@@ -547,8 +549,8 @@ const saveDistributors=()=>saveTab("Distributors",DB.distributors.map(d=>[d.id,d
 const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.tagline,c.address,c.contact,c.bank,JSON.stringify(c.accounts||[])]));
 const saveUsers=()=>saveTab("Users",DB.users.map(u=>[u.id,u.email,u.roles.join(","),u.companies.join(","),u.locked?"TRUE":"FALSE"]));
 const saveClients=()=>saveTab("Clients",DB.clients.map(c=>[c.id,c.name,c.contact,c.phone,c.email,c.address,c.notes,(c.companies||[]).join(",")]));
-const saveAssets=()=>saveTab("Assets",DB.assets.map(a=>[a.id,a.code,a.brand,a.series,a.description,a.category,a.serial,a.owner,a.ownerNote,a.condition,a.location,a.purchaseDate,a.purchaseCost||0,a.dailyRate||0,a.replacement||0,a.companyId||"",a.notes||"",a.equipmentId||""]));
-const saveTxns=()=>saveTab("Transactions",DB.txns.map(t=>[t.id,t.companyId,t.date,t.dir,t.category,t.description,t.amount||0,t.account||"",t.toAccount||"",t.payee||"",t.projectId||"",t.reference||"",t.notes||"",t.recurring?"1":""]));
+const saveAssets=()=>saveTab("Assets",DB.assets.map(a=>[a.id,a.code,a.brand,a.series,a.description,a.category,a.serial,a.owner,a.ownerNote,a.condition,a.location,a.purchaseDate,a.purchaseCost||0,a.dailyRate||0,a.replacement||0,a.companyId||"",a.notes||"",a.equipmentId||"",JSON.stringify(a.files||[])]));
+const saveTxns=()=>saveTab("Transactions",DB.txns.map(t=>[t.id,t.companyId,t.date,t.dir,t.category,t.description,t.amount||0,t.account||"",t.toAccount||"",t.payee||"",t.projectId||"",t.reference||"",t.notes||"",t.recurring?"1":"",JSON.stringify(t.files||[])]));
 const saveBookings=()=>saveTab("Bookings",DB.bookings.map(b=>[b.id,b.projectId,b.kind,b.brand,b.series,b.partnerId,b.qty||1,b.from,b.to,b.notes||"",b.status||"reserved",JSON.stringify(b.units||[])]));
 async function persist(fn,msg){
   try{
@@ -1723,7 +1725,7 @@ function astRenderBody(){
         <th class="t-right" style="width:110px">Daily rate</th><th class="t-right" style="width:120px">Replacement</th><th style="width:130px">Location</th><th style="width:110px"></th></tr></thead>
       <tbody>${list.map(a=>`
         <tr class="rowlink" onclick="openAssetModal('${a.id}')">
-          <td class="num" style="font-weight:700">${esc(a.code||"—")}</td>
+          <td class="num" style="font-weight:700">${esc(a.code||"—")}${attachDot(a)}</td>
           <td style="font-weight:600">${esc(a.brand)} ${esc(a.series)}<br><span style="font-size:11px;color:var(--muted)">${esc(a.category||"")}${a.description?" · "+esc(a.description):""}</span></td>
           <td class="num" style="font-size:12px">${esc(a.serial||"—")}</td>
           <td>${ownerPill(a)}</td>
@@ -1874,7 +1876,8 @@ function openAssetModal(id){
         <span id="a_rateHint" style="font-size:11.5px;color:var(--muted)"></span></div>
       <div class="field"><label>Replacement value (IDR) — charged on loss/total damage</label><input id="a_repl" type="number" min="0" value="${a?.replacement||""}"></div>
     </div>
-    <div class="field"><label>Notes (service history, quirks…)</label><textarea id="a_notes" rows="2">${esc(a?.notes||"")}</textarea></div>`,
+    <div class="field"><label>Notes (service history, quirks…)</label><textarea id="a_notes" rows="2">${esc(a?.notes||"")}</textarea></div>
+    ${a?attachStripHTML("asset",a.id,driveFiles(a)):`<div style="font-size:11.5px;color:var(--muted)">Save the asset first, then reopen it to attach the purchase invoice or warranty.</div>`}`,
     `<button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="saveAssetModal('${id||""}')">${a?"Save changes":"Add"}</button>`,true);
   astRateHint();
@@ -1942,6 +1945,126 @@ const bkDispatchState=b=>{const n=bkUnits(b).length, back=bkReturned(b);
 const DSTATE={pending:{label:"not dispatched",bg:"#EDF1EC",fg:"#5C665F"},out:{label:"out",bg:"#E2E9F3",fg:"#2C4A6E"},
   partial:{label:"partly back",bg:"#F7EDDA",fg:"#B4720E"},returned:{label:"returned",bg:"var(--accent-soft)",fg:"var(--accent-dark)"}};
 const dstatePill=b=>{const x=DSTATE[bkDispatchState(b)];return `<span class="pill" style="background:${x.bg};color:${x.fg}">${x.label}</span>`;};
+/* ================= GOOGLE DRIVE ATTACHMENTS =================
+   Uses the narrow drive.file scope: the app can only ever see files it created.
+   Records store {id,name,link} only — never file contents. Detaching unlinks
+   from the app and leaves the file in Drive on purpose. */
+const DRIVE_ROOT="AV Quotation Builder";
+const attachDot=o=>{const n=driveFiles(o).length;return n?` <span title="${n} attachment(s)" style="color:var(--muted);font-size:11px">📎${n}</span>`:"";};
+const driveFiles=o=>Array.isArray(o?.files)?o.files:(Array.isArray(o?.extra?.files)?o.extra.files:[]);
+async function driveApi(path,opts={}){
+  await ensureToken();
+  const r=await fetch("https://www.googleapis.com/"+path,{...opts,
+    headers:{Authorization:"Bearer "+token,...(opts.headers||{})}});
+  if(!r.ok) throw new Error("Drive: "+(await r.text()).slice(0,180));
+  return r.json();
+}
+async function driveFindOrMakeFolder(name,parentId){
+  const q=encodeURIComponent(`name='${String(name).replace(/'/g,"\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`+(parentId?` and '${parentId}' in parents`:""));
+  const found=await driveApi(`drive/v3/files?q=${q}&fields=files(id,name)&pageSize=1`);
+  if(found.files?.length) return found.files[0].id;
+  const made=await driveApi("drive/v3/files?fields=id",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({name:String(name),mimeType:"application/vnd.google-apps.folder",...(parentId?{parents:[parentId]}:{})})});
+  return made.id;
+}
+/* folder path: AV Quotation Builder / <company> / <year> / <project or bucket> */
+async function driveFolderFor(ctx){
+  const root=await driveFindOrMakeFolder(DRIVE_ROOT,null);
+  const co=DB.companies.find(c=>c.id===(ctx.companyId||ACTIVE_COMPANY));
+  const coId=await driveFindOrMakeFolder(co?.name||"Company",root);
+  const yr=await driveFindOrMakeFolder(String(ctx.year||new Date().getFullYear()),coId);
+  return await driveFindOrMakeFolder(ctx.folder||"General",yr);
+}
+async function driveUpload(file,name,folderId){
+  const meta={name,parents:[folderId]};
+  const boundary="-------av"+Date.now();
+  const head=`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: ${file.type||"application/octet-stream"}\r\n\r\n`;
+  const tail=`\r\n--${boundary}--`;
+  const body=new Blob([head,file,tail],{type:"multipart/related; boundary="+boundary});
+  await ensureToken();
+  const r=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink",
+    {method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"multipart/related; boundary="+boundary},body});
+  if(!r.ok) throw new Error("Upload failed: "+(await r.text()).slice(0,180));
+  return r.json();
+}
+/* ---------- attachment strip, shared by every record type ---------- */
+let ATTACH={kind:null,id:null};
+function attachStripHTML(kind,id,files){
+  const list=files||[];
+  return `<div class="card card-pad" style="margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <span class="eyebrow">Attachments${list.length?" ("+list.length+")":""}</span>
+      <div style="display:flex;gap:6px">
+        <button class="btn small" onclick="attachPick('${kind}','${id}',false)">📎 Attach file</button>
+        <button class="btn small" onclick="attachPick('${kind}','${id}',true)">📷 Photo</button>
+      </div>
+    </div>
+    ${list.length?`<div style="margin-top:10px;display:flex;flex-direction:column;gap:6px">
+      ${list.map((f,i)=>`<div style="display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:7px 10px">
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+        ${f.link?`<a class="btn ghost small" href="${esc(f.link)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">open</a>`:""}
+        <button class="btn ghost small danger" title="Remove from this record (the file stays in Drive)" onclick="attachRemove('${kind}','${id}',${i})">✕</button>
+      </div>`).join("")}</div>`
+    :`<div style="font-size:12px;color:var(--muted);margin-top:8px">Nothing attached yet — client PO, bukti potong PPh, signed BAST, nota…</div>`}
+    <div id="attachMsg_${id}" style="font-size:11.5px;color:var(--muted);margin-top:8px"></div></div>`;
+}
+function attachTargetOf(kind,id){
+  if(kind==="doc"){ const q=getQuote(id); if(!q) return null;
+    const p=getProject(q.projectId);
+    return {obj:q,setFiles:f=>{q.extra=q.extra||{};q.extra.files=f;},get:()=>driveFiles(q),save:saveQuotes,
+      ctx:{companyId:docCompanyId(q),year:String(q.date||"").slice(0,4),folder:p?.name||"Project"},
+      prefix:(q.quoteNumber||q.title||KIND_LABEL[q.kind]||"doc")}; }
+  if(kind==="txn"){ const t=DB.txns.find(x=>x.id===id); if(!t) return null;
+    return {obj:t,setFiles:f=>{t.files=f;},get:()=>driveFiles(t),save:saveTxns,
+      ctx:{companyId:t.companyId,year:String(t.date||"").slice(0,4),folder:"Cash book"},
+      prefix:(t.description||txCatLabel(t.category)||"transaction")}; }
+  if(kind==="asset"){ const a=assetById(id); if(!a) return null;
+    return {obj:a,setFiles:f=>{a.files=f;},get:()=>driveFiles(a),save:saveAssets,
+      ctx:{companyId:a.companyId,year:String(a.purchaseDate||"").slice(0,4)||new Date().getFullYear(),folder:"Assets"},
+      prefix:(a.code||a.brand+" "+a.series||"asset")}; }
+  return null;
+}
+function attachPick(kind,id,camera){
+  const t=attachTargetOf(kind,id); if(!t) return;
+  const inp=document.createElement("input");
+  inp.type="file"; inp.multiple=!camera;
+  if(camera){ inp.accept="image/*"; inp.setAttribute("capture","environment"); }
+  inp.onchange=async()=>{ await attachUpload(kind,id,[...inp.files]); };
+  inp.click();
+}
+async function attachUpload(kind,id,files){
+  if(!files.length) return;
+  const t=attachTargetOf(kind,id); if(!t) return;
+  const msg=$("#attachMsg_"+id);
+  const say=m=>{ if(msg) msg.textContent=m; };
+  try{
+    say("Preparing Drive folder…");
+    const folderId=await driveFolderFor(t.ctx);
+    const out=t.get().slice();
+    for(let i=0;i<files.length;i++){
+      const f=files[i];
+      say(`Uploading ${i+1} of ${files.length} — ${f.name}…`);
+      const safe=String(t.prefix).replace(/[\\/:*?"<>|]/g,"-");
+      const up=await driveUpload(f,safe+" — "+f.name,folderId);
+      out.push({id:up.id,name:up.name,link:up.webViewLink||("https://drive.google.com/file/d/"+up.id+"/view")});
+    }
+    t.setFiles(out); say("");
+    render(); await persist(t.save,files.length+" file(s) attached");
+  }catch(e){
+    say("");
+    alert(String(e.message).includes("insufficient")||String(e.message).includes("403")
+      ? "Drive permission missing — sign out and sign in again to approve Drive access."
+      : "Attach failed: "+e.message);
+  }
+}
+async function attachRemove(kind,id,i){
+  const t=attachTargetOf(kind,id); if(!t) return;
+  const files=t.get().slice(); const f=files[i];
+  if(!confirm("Remove “"+(f?.name||"file")+"” from this record?\n\nThe file stays in your Google Drive — this only unlinks it here.")) return;
+  files.splice(i,1); t.setFiles(files);
+  render(); await persist(t.save,"Attachment removed");
+}
 /* ---------- account balances ----------
    opening balance + everything dated on/after its as-of date. Petty cash is a
    virtual account (_petty) fed only by transfers and transactions. */
@@ -2546,7 +2669,7 @@ function renderTxBody(){
         const d=TXDIR[t.dir]||TXDIR.out;
         return `<tr class="rowlink" onclick="openTxnModal('${t.id}')">
           <td class="num" style="font-size:12.5px">${fmtDate(t.date)}</td>
-          <td style="font-weight:600">${esc(t.description||"—")}
+          <td style="font-weight:600">${esc(t.description||"—")}${attachDot(t)}
             <br><span style="font-size:11px;color:var(--muted)">${esc(t.payee||"")}${t.projectId?` · <span style="color:var(--accent-dark)">${esc(getProject(t.projectId)?.name||"")}</span>`:""}${t.reference?" · ref "+esc(t.reference):""}</span></td>
           <td><span class="pill" style="background:${d.bg};color:${d.fg}">${esc(txCatLabel(t.category))}</span></td>
           <td style="font-size:12px;color:var(--muted)">${esc(acctName(cid,t.account))}${t.dir==="transfer"?" → "+esc(acctName(cid,t.toAccount)):""}</td>
@@ -2591,7 +2714,8 @@ function openTxnModal(id){
     <div class="field"><label style="display:flex;align-items:center;gap:8px;font-weight:400">
       <input type="checkbox" id="t_rec" ${t?.recurring?"checked":""}> Repeats monthly (rent, salary, internet…)</label>
       <span style="font-size:11.5px;color:var(--muted)">Kept in the Recurring list — you post each month's batch yourself, nothing is created automatically.</span></div>
-    <div class="field"><label>Notes</label><textarea id="t_notes" rows="2">${esc(t?.notes||"")}</textarea></div>`,
+    <div class="field"><label>Notes</label><textarea id="t_notes" rows="2">${esc(t?.notes||"")}</textarea></div>
+    ${t?attachStripHTML("txn",t.id,driveFiles(t)):`<div style="font-size:11.5px;color:var(--muted)">Save the transaction first, then reopen it to attach the nota or struk.</div>`}`,
     `${t?`<button class="btn ghost danger" onclick="txDelete('${t.id}')">Delete</button>`:""}
      <button class="btn" onclick="closeModal()">Cancel</button>
      <button class="btn primary" onclick="saveTxnModal('${id||""}')">${t?"Save changes":"Add"}</button>`,true);
@@ -3256,7 +3380,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
+        <td>${esc(q.title||"Untitled")}${attachDot(q)}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         <td style="font-size:12.5px">${esc([...bastRefList(q),q.extra?.spkNo].filter(Boolean).join(" · ")||"—")}</td>
         <td class="t-right" style="white-space:nowrap">${docRowActions(q,kind)}</td>
@@ -3267,7 +3391,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
+        <td>${esc(q.title||"Untitled")}${attachDot(q)}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         <td style="font-size:12.5px">${esc(q.extra?.refQuote||"—")}</td>
         <td class="t-right num">${q.sections.reduce((a,s)=>a+s.items.length,0)}</td>
@@ -3279,7 +3403,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
+        <td>${esc(q.title||"Untitled")}${attachDot(q)}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         <td style="font-size:12.5px">${esc(q.extra?.refQuote||"—")}</td>
         <td style="font-size:12.5px;color:var(--muted)">${esc(q.extra?.shipTo||"—")}</td>
@@ -3292,7 +3416,7 @@ function docTable(list,kind,emptyMsg){
     <tbody>${list.length?list.map(q=>`
       <tr class="rowlink" onclick="go({view:'quote',quoteId:'${q.id}'})">
         <td class="num" style="font-weight:600">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"Untitled")}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
+        <td>${esc(q.title||"Untitled")}${attachDot(q)}${finalPill(q)}${revBadge(q)}${optBadge(q)}</td>
         <td class="num" style="font-size:12.5px">${fmtDate(q.date)}</td>
         ${kind==="po"?`<td>${esc(q.extra?.distributor||"—")}</td><td>${poFullyPaid(q)?`<span class="pill" title="${poPayments(q).length} payment(s)">paid ${fmtDate(poPayments(q).slice(-1)[0]?.date)}</span>`
         :poPaidTotal(q)>0?`<span class="pill amber" title="${fmtRp(poPaidTotal(q))} of ${fmtRp(quoteGrand(q))}">partial · ${fmtRp(poOutstanding(q))} left</span>`
@@ -4140,7 +4264,8 @@ function renderQuote(v,q,p){
       <textarea id="notesBox" rows="7" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;outline:none"
         placeholder="Terms & conditions, validity, delivery time, exclusions…"
         oninput="qSetSilent('${q.id}','notes',this.value)">${esc(q.notes)}</textarea>
-    </div>`;
+    </div>
+    ${attachStripHTML("doc",q.id,driveFiles(q))}`;
 }
 function sectionHTML(q,s,si){
   const sj=["sj","mos"].includes(q.kind); // price-free document kinds
@@ -4669,7 +4794,8 @@ function renderReceipt(v,q,p){
         <span class="eyebrow">Amount in words (auto) — cash received</span><br>
         <em style="text-transform:capitalize">${esc(terbilang(x.amount||0))}</em>
       </div>
-    </div>`;
+    </div>
+    ${attachStripHTML("doc",q.id,driveFiles(q))}`;
 }
 
 /* ================= BA PROGRESS EDITOR ================= */
@@ -4737,7 +4863,8 @@ function renderBAP(v,q,p){
       <span class="eyebrow">Notes (printed)</span>
       <textarea rows="4" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;outline:none;margin-top:8px"
         oninput="qSetSilent('${q.id}','notes',this.value)">${esc(q.notes)}</textarea>
-    </div>`;
+    </div>
+    ${attachStripHTML("doc",q.id,driveFiles(q))}`;
 }
 
 /* ================= BAST EDITOR ================= */
@@ -4785,7 +4912,8 @@ function renderBAST(v,q,p){
               <span class="pill ${d.kind==="mos"?"amber":""}">${d.kind==="mos"?"MOS":"BA Progress"}</span> ${esc(d.quoteNumber||d.title)}</label>`).join("")+`</div>`;})()}
       </div>
       <div class="field" style="margin-bottom:0"><label>Additional notes (printed)</label><textarea rows="3" oninput="qSetSilent('${q.id}','notes',this.value)">${esc(q.notes)}</textarea></div>
-    </div>`;
+    </div>
+    ${attachStripHTML("doc",q.id,driveFiles(q))}`;
 }
 
 function bastRefList(q){
@@ -5207,7 +5335,7 @@ function printSummary(pid,scope){
       <thead><tr><th style="width:24px">No</th><th style="width:120px">Number</th><th>Title / Scope</th><th style="width:84px">Date</th><th style="width:96px;text-align:right">Subtotal</th><th style="width:84px;text-align:right">Discount</th><th style="width:84px;text-align:right">PPN 11%</th><th style="width:104px;text-align:right">Grand Total</th></tr></thead>
       <tbody>${list.map((q,i)=>`<tr>
         <td class="num-p">${i+1}</td><td class="num-p">${esc(q.quoteNumber||"—")}</td>
-        <td>${esc(q.title||"—")}${optFamily(q).length>1?` <strong>[${esc(optLabel(q)||"option")}]</strong>${exS.has(q.id)?" *":""}`:""}</td>
+        <td>${esc(q.title||"—")}${attachDot(q)}${optFamily(q).length>1?` <strong>[${esc(optLabel(q)||"option")}]</strong>${exS.has(q.id)?" *":""}`:""}</td>
         <td class="num-p">${fmtDate(q.date)}</td>
         <td class="num-p" style="text-align:right">${fmtRp(quoteSubtotal(q))}</td>
         <td class="num-p" style="text-align:right">${quoteDiscount(q)?"− "+fmtRp(quoteDiscount(q)):"—"}</td>
