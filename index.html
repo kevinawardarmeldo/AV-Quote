@@ -1942,6 +1942,74 @@ const bkDispatchState=b=>{const n=bkUnits(b).length, back=bkReturned(b);
 const DSTATE={pending:{label:"not dispatched",bg:"#EDF1EC",fg:"#5C665F"},out:{label:"out",bg:"#E2E9F3",fg:"#2C4A6E"},
   partial:{label:"partly back",bg:"#F7EDDA",fg:"#B4720E"},returned:{label:"returned",bg:"var(--accent-soft)",fg:"var(--accent-dark)"}};
 const dstatePill=b=>{const x=DSTATE[bkDispatchState(b)];return `<span class="pill" style="background:${x.bg};color:${x.fg}">${x.label}</span>`;};
+/* ---------- account balances ----------
+   opening balance + everything dated on/after its as-of date. Petty cash is a
+   virtual account (_petty) fed only by transfers and transactions. */
+function acctBalance(cid,accId){
+  const acc=coAccounts(cid).find(a=>a.id===accId);
+  const opening=accId==="_petty"?0:(Number(acc?.opening)||0);
+  const since=accId==="_petty"?"":(acc?.openingDate||"");
+  const on=d=>d&&(!since||String(d)>=since);
+  const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid);
+  const pids=new Set(projs.map(p=>p.id));
+  let inn=0,out=0;
+  DB.quotations.filter(q=>pids.has(q.projectId)&&q.kind==="receipt").forEach(r=>{
+    if((r.extra?.toAccount||"")===accId&&on(r.date)) inn+=recCash(r); });
+  DB.quotations.filter(q=>pids.has(q.projectId)&&q.kind==="po").forEach(o=>
+    poPayments(o).forEach(p=>{ if((p.fromAccount||"")===accId&&on(p.date)) out+=Number(p.amount)||0; }));
+  DB.txns.filter(t=>(t.companyId||DB.companies[0]?.id)===cid).forEach(t=>{
+    if(!on(t.date)) return;
+    if(t.account===accId){ if(t.dir==="in") inn+=t.amount; else out+=t.amount; }   // transfer out counts as out
+    if(t.dir==="transfer"&&t.toAccount===accId) inn+=t.amount;
+  });
+  return {opening,in:inn,out,balance:opening+inn-out,since,unset:accId!=="_petty"&&!acc?.openingDate};
+}
+function allAccountBalances(cid){
+  const rows=coAccounts(cid).map(a=>({id:a.id,label:a.label||a.bank,sub:(a.bank||"")+" "+(a.no||""),...acctBalance(cid,a.id)}));
+  const petty=acctBalance(cid,"_petty");
+  if(petty.in||petty.out) rows.push({id:"_petty",label:"Petty cash",sub:"on hand",...petty});
+  return rows;
+}
+/* ---------- receivables & payables ---------- */
+const invDueDate=q=>{
+  const t=q?.extra?.dueDate; if(t) return t;
+  const terms=Number(q?.extra?.terms);
+  if(!terms||!q?.date) return "";
+  const d=new Date(q.date+"T00:00:00"); d.setDate(d.getDate()+terms);
+  return d.toISOString().slice(0,10);
+};
+const daysBetween=(a,b)=>Math.round((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/86400000);
+function agingBucket(dueOrDate,today){
+  const d=daysBetween(dueOrDate,today);
+  if(d<=0) return "current"; if(d<=30) return "d30"; if(d<=60) return "d60"; return "d60p";
+}
+const AGE={current:{label:"Not due yet",color:"var(--muted)"},d30:{label:"1–30 days",color:"var(--amber)"},
+  d60:{label:"31–60 days",color:"#B4720E"},d60p:{label:"60+ days",color:"var(--red)"}};
+function arRows(cid){
+  const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid);
+  const today=todayISO();
+  return projs.map(p=>{
+    const invs=countable(kindQuotes(p.id,"invoice"));
+    const invoiced=invs.reduce((a,q)=>a+quoteGrand(q),0);
+    const settled=kindQuotes(p.id,"receipt").reduce((a,q)=>a+recSettled(q),0);
+    const out=invoiced-settled;
+    if(out<=1) return null;
+    const oldest=invs.map(q=>invDueDate(q)||q.date).filter(Boolean).sort()[0]||p.created;
+    const due=invs.map(q=>invDueDate(q)).filter(Boolean).sort()[0];
+    return {p,invoiced,settled,out,ref:oldest,due,days:daysBetween(oldest,today),
+      bucket:agingBucket(oldest,today),hasDue:!!due};
+  }).filter(Boolean).sort((a,b)=>b.days-a.days);
+}
+function apRows(cid){
+  const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid);
+  const pids=new Set(projs.map(p=>p.id));
+  const today=todayISO();
+  return DB.quotations.filter(q=>pids.has(q.projectId)&&q.kind==="po"&&poOutstanding(q)>0)
+    .map(o=>({o,vendor:o.extra?.distributor||"—",total:quoteGrand(o),paid:poPaidTotal(o),out:poOutstanding(o),
+      ref:o.date,days:daysBetween(o.date,today),bucket:agingBucket(o.date,today),
+      proj:getProject(o.projectId)?.name||""}))
+    .sort((a,b)=>b.days-a.days);
+}
 /* ---------- transaction categories ----------
    group decides where a line lands: opex/income hit the income statement,
    capex is an asset purchase, equity is owner money — neither touches profit. */
@@ -2407,7 +2475,7 @@ function renderTxnsTab(b){
   if(!years.includes(String(txYear))) years.unshift(String(txYear));
   b.innerHTML=`
     <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
-      ${[["book","Cash book"],["is","📊 Income statement"],["cf","💧 Cash flow"],["rec","🔁 Recurring"]].map(([k,l])=>`
+      ${[["book","Cash book"],["bal","🏦 Balances"],["arap","📄 AR / AP"],["is","📊 Income statement"],["cf","💧 Cash flow"],["rec","🔁 Recurring"]].map(([k,l])=>`
         <button class="btn small" style="border-radius:99px;${txView===k?"background:var(--ink);color:#fff;border-color:var(--ink)":""}"
           onclick="txView='${k}';render()">${l}</button>`).join("")}
     </div>
@@ -2429,6 +2497,8 @@ function renderTxnsTab(b){
 function renderTxBody(){
   const el=$("#txBody"); if(!el) return;
   const cid=ACTIVE_COMPANY;
+  if(txView==="bal") return el.innerHTML=balancesHTML(cid);
+  if(txView==="arap")return el.innerHTML=arApHTML(cid);
   if(txView==="is")  return el.innerHTML=incomeStatementHTML(cid,txYear);
   if(txView==="cf")  return el.innerHTML=cashFlowHTML(cid,txYear);
   if(txView==="rec") return el.innerHTML=recurringHTML(cid);
@@ -2575,6 +2645,99 @@ async function postRecurring(){
   const posted=recs.filter(t=>!txOfCompany(cid).some(x=>!x.recurring&&x.category===t.category&&x.description===t.description&&String(x.date).startsWith(ym)));
   posted.forEach(t=>DB.txns.unshift({...t,id:uid(),date:ym+"-"+String(new Date().getDate()).padStart(2,"0"),recurring:false,reference:""}));
   render(); await persist(saveTxns,posted.length+" recurring entr"+(posted.length===1?"y":"ies")+" posted — review the amounts");
+}
+function balancesHTML(cid){
+  const rows=allAccountBalances(cid);
+  const total=rows.reduce((a,r)=>a+r.balance,0);
+  const unset=rows.filter(r=>r.unset);
+  const ar=arRows(cid).reduce((a,r)=>a+r.out,0);
+  const ap=apRows(cid).reduce((a,r)=>a+r.out,0);
+  return `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      ${[["Cash on hand","Rp "+fmtRpShort(total),"var(--accent-dark)"],
+         ["Owed to you (AR)","Rp "+fmtRpShort(ar),"var(--amber)"],
+         ["You owe (AP)","Rp "+fmtRpShort(ap),"var(--red)"],
+         ["Working capital","Rp "+fmtRpShort(total+ar-ap),total+ar-ap>=0?"var(--accent-dark)":"var(--red)"]].map(([l,v,c])=>`
+        <div class="card card-pad" style="flex:1;min-width:150px"><div class="eyebrow">${l}</div>
+          <div class="num" style="font-size:19px;font-weight:800;margin-top:4px;color:${c}">${v}</div></div>`).join("")}
+    </div>
+    ${unset.length?`<div class="card card-pad" style="margin-bottom:14px;border-left:3px solid var(--amber)">
+      <span class="eyebrow" style="color:var(--amber)">${unset.length} account(s) without an opening balance</span>
+      <div style="font-size:12.5px;margin-top:6px">${unset.map(r=>esc(r.label)).join(" · ")} — their balance shows movement only, so it won't match your bank.
+      <button class="btn ghost small" onclick="route.tab='companies';render()">set it in Companies</button></div></div>`:""}
+    ${rows.length?`<div class="card" style="overflow-x:auto"><table class="grid" style="min-width:760px">
+      <thead><tr><th>Account</th><th style="width:110px">Since</th><th class="t-right" style="width:140px">Opening</th>
+        <th class="t-right" style="width:130px">In</th><th class="t-right" style="width:130px">Out</th><th class="t-right" style="width:150px">Balance now</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr class="rowlink" onclick="dashYear=${txYear};openAcctTransactions('${r.id}')">
+        <td style="font-weight:600">${esc(r.label)}<br><span style="font-size:11px;color:var(--muted)">${esc(r.sub)}</span></td>
+        <td style="font-size:12px;color:var(--muted)">${r.since?fmtDate(r.since):"—"}</td>
+        <td class="t-right num" style="color:var(--muted)">${r.opening?fmtRp(r.opening):"—"}</td>
+        <td class="t-right num" style="color:var(--accent-dark)">${r.in?fmtRp(r.in):"—"}</td>
+        <td class="t-right num" style="color:var(--amber)">${r.out?fmtRp(r.out):"—"}</td>
+        <td class="t-right num" style="font-weight:800;color:${r.balance>=0?"var(--ink)":"var(--red)"}">${fmtRp(r.balance)}</td></tr>`).join("")}
+      </tbody>
+      <tfoot><tr style="border-top:2px solid var(--line);font-weight:800"><td colspan="5">Total cash</td>
+        <td class="t-right num">${fmtRp(total)}</td></tr></tfoot></table></div>`
+    :`<div class="card"><div class="empty"><span class="eyebrow">No accounts yet</span>Add bank accounts (with an opening balance) in the Companies tab.</div></div>`}
+    <p style="font-size:11.5px;color:var(--muted);margin-top:12px">Balance = opening + receipts + transfers in − PO payments − expenses, counting only movements dated on or after the "since" date. Click a row for its ledger — if the balance disagrees with your bank, the missing entry is in there.</p>`;
+}
+function arApHTML(cid){
+  const ar=arRows(cid), ap=apRows(cid), today=todayISO();
+  const bucketRow=(rows,key)=>Object.keys(AGE).map(k=>rows.filter(r=>r.bucket===k).reduce((a,r)=>a+r.out,0));
+  const arB=bucketRow(ar), apB=bucketRow(ap);
+  const arTot=ar.reduce((a,r)=>a+r.out,0), apTot=ap.reduce((a,r)=>a+r.out,0);
+  const noDue=ar.filter(r=>!r.hasDue).length;
+  const agingTable=(label,rows,buckets,total,color)=>`
+    <div class="card" style="margin-bottom:8px"><div class="card-pad" style="padding-bottom:6px">
+      <span class="eyebrow" style="color:${color}">${label}</span></div>
+      <table class="grid"><thead><tr>${Object.values(AGE).map(a=>`<th class="t-right">${a.label}</th>`).join("")}<th class="t-right">Total</th></tr></thead>
+      <tbody><tr>${buckets.map((v,i)=>`<td class="t-right num" style="color:${Object.values(AGE)[i].color}">${v?fmtRp(v):"—"}</td>`).join("")}
+        <td class="t-right num" style="font-weight:800">${fmtRp(total)}</td></tr></tbody></table></div>`;
+  return `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      ${[["Owed to you","Rp "+fmtRpShort(arTot),"var(--amber)"],["You owe","Rp "+fmtRpShort(apTot),"var(--red)"],
+         ["Net position","Rp "+fmtRpShort(arTot-apTot),arTot-apTot>=0?"var(--accent-dark)":"var(--red)"]].map(([l,v,c])=>`
+        <div class="card card-pad" style="flex:1;min-width:150px"><div class="eyebrow">${l}</div>
+          <div class="num" style="font-size:19px;font-weight:800;margin-top:4px;color:${c}">${v}</div></div>`).join("")}
+    </div>
+    ${agingTable("Receivables aging","",arB,arTot,"var(--amber)")}
+    ${ar.length?`<div class="card" style="overflow-x:auto;margin-bottom:20px"><table class="grid" style="min-width:800px">
+      <thead><tr><th>Project / client</th><th style="width:120px">${noDue?"Due / invoiced":"Due"}</th><th style="width:110px">Age</th>
+        <th class="t-right">Invoiced</th><th class="t-right">Received</th><th class="t-right">Outstanding</th></tr></thead>
+      <tbody>${ar.map(r=>`<tr class="rowlink" onclick="go({view:'project',projectId:'${r.p.id}',ptab:'billing'})">
+        <td style="font-weight:600">${esc(r.p.name)}<br><span style="font-size:11px;color:var(--muted)">${esc(r.p.client||"")}</span></td>
+        <td style="font-size:12px;color:var(--muted)">${fmtDate(r.ref)}${r.hasDue?"":' <span title="No due date on the invoice — aging from the invoice date" style="color:var(--amber)">*</span>'}</td>
+        <td><span class="pill" style="background:transparent;color:${AGE[r.bucket].color};border:1px solid var(--line)">${r.days>0?r.days+" days":"not due"}</span></td>
+        <td class="t-right num">${fmtRp(r.invoiced)}</td>
+        <td class="t-right num" style="color:var(--muted)">${fmtRp(r.settled)}</td>
+        <td class="t-right num" style="font-weight:700;color:${AGE[r.bucket].color}">${fmtRp(r.out)}</td></tr>`).join("")}
+      </tbody></table></div>
+      ${noDue?`<p style="font-size:11.5px;color:var(--muted);margin:-12px 0 20px">* ${noDue} project(s) have invoices without a due date — set payment terms on the invoice and the age becomes days overdue instead of days since invoicing.</p>`:""}`
+    :`<div class="card" style="margin-bottom:20px"><div class="empty">Nothing outstanding — every invoice is settled.</div></div>`}
+    ${agingTable("Payables aging (from purchase orders)",'',apB,apTot,"var(--red)")}
+    ${ap.length?`<div class="card" style="overflow-x:auto"><table class="grid" style="min-width:800px">
+      <thead><tr><th>Vendor / partner</th><th style="width:120px">PO date</th><th style="width:110px">Age</th>
+        <th class="t-right">PO total</th><th class="t-right">Paid</th><th class="t-right">Outstanding</th></tr></thead>
+      <tbody>${ap.map(r=>`<tr class="rowlink" onclick="go({view:'quote',quoteId:'${r.o.id}'})">
+        <td style="font-weight:600">${esc(r.vendor)}<br><span style="font-size:11px;color:var(--muted)">${esc(r.o.quoteNumber||r.o.title||"")}${r.proj?" · "+esc(r.proj):""}</span></td>
+        <td style="font-size:12px;color:var(--muted)">${fmtDate(r.ref)}</td>
+        <td><span class="pill" style="background:transparent;color:${AGE[r.bucket].color};border:1px solid var(--line)">${r.days>0?r.days+" days":"today"}</span></td>
+        <td class="t-right num">${fmtRp(r.total)}</td>
+        <td class="t-right num" style="color:var(--muted)">${r.paid?fmtRp(r.paid):"—"}</td>
+        <td class="t-right num" style="font-weight:700;color:${AGE[r.bucket].color}">${fmtRp(r.out)}</td></tr>`).join("")}
+      </tbody></table></div>`
+    :`<div class="card"><div class="empty">Nothing owed on purchase orders.</div></div>`}
+    ${(()=>{const d=pnlData(cid,txYear);
+      return `<div class="card card-pad" style="margin-top:20px">
+        <span class="eyebrow">Cash profit → accrual profit (${txYear})</span>
+        <table class="grid" style="margin-top:8px"><tbody>
+          <tr><td>Net profit — cash basis</td><td class="t-right num">${fmtRp(d.net)}</td></tr>
+          <tr><td style="padding-left:22px;color:var(--muted)">+ invoiced but not yet received (AR)</td><td class="t-right num" style="color:var(--accent-dark)">${fmtRp(arTot)}</td></tr>
+          <tr><td style="padding-left:22px;color:var(--muted)">− received or ordered but not yet paid (AP)</td><td class="t-right num" style="color:var(--amber)">(${fmtRp(apTot)})</td></tr>
+          <tr style="font-weight:800;border-top:2px solid var(--line)"><td>Indicative accrual profit</td>
+            <td class="t-right num" style="color:${d.net+arTot-apTot>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(d.net+arTot-apTot)}</td></tr>
+        </tbody></table>
+        <p style="font-size:11.5px;color:var(--muted);margin-top:8px">Rough bridge, not a restatement: it treats the whole AR and AP balance as this year's, and AP only covers purchase orders — bills without a PO aren't tracked yet.</p></div>`;})()}`;
 }
 /* ---------- statements (cash basis, derived — management reporting) ---------- */
 function pnlData(cid,year){
@@ -2848,18 +3011,20 @@ function renderCompaniesTab(b){
     <p style="font-size:12px;color:var(--muted);margin-top:10px">Each project selects one issuer company — its letterhead prints on every PDF, and its bank details print on invoices.</p>`;
 }
 let COACC=[];
-function coAccAdd(){ COACC.push({id:uid(),label:"",bank:"",no:"",name:""}); coAccRender(); }
+function coAccAdd(){ COACC.push({id:uid(),label:"",bank:"",no:"",name:"",opening:0,openingDate:""}); coAccRender(); }
 function coAccDel(i){ COACC.splice(i,1); coAccRender(); }
 function coAccSet(i,k,v){ COACC[i][k]=v; }
 function coAccRender(){
   const el=$("#coAccList"); if(!el) return;
-  el.innerHTML=COACC.length?`<table class="grid"><thead><tr><th style="width:110px">Label</th><th style="width:100px">Bank</th><th>Account no.</th><th>a.n.</th><th style="width:34px"></th></tr></thead>
+  el.innerHTML=COACC.length?`<table class="grid"><thead><tr><th style="width:100px">Label</th><th style="width:90px">Bank</th><th>Account no.</th><th style="width:120px">Opening balance</th><th style="width:120px">As of</th><th style="width:34px"></th></tr></thead>
     <tbody>${COACC.map((a,i)=>`<tr>
       <td><input class="inline-input" value="${esc(a.label||"")}" placeholder="Operasional" oninput="coAccSet(${i},'label',this.value)"></td>
       <td><input class="inline-input" value="${esc(a.bank||"")}" placeholder="BCA" oninput="coAccSet(${i},'bank',this.value)"></td>
       <td><input class="inline-input" value="${esc(a.no||"")}" placeholder="123 456 7890" oninput="coAccSet(${i},'no',this.value)"></td>
-      <td><input class="inline-input" value="${esc(a.name||"")}" placeholder="a.n." oninput="coAccSet(${i},'name',this.value)"></td>
-      <td class="rowtools"><button class="del" onclick="coAccDel(${i})">✕</button></td></tr>`).join("")}</tbody></table>`
+      <td><input class="inline-input num" type="number" min="0" value="${a.opening||""}" placeholder="0" oninput="coAccSet(${i},'opening',Number(this.value)||0)"></td>
+      <td><input class="inline-input" type="date" value="${esc(a.openingDate||"")}" oninput="coAccSet(${i},'openingDate',this.value)"></td>
+      <td class="rowtools"><button class="del" onclick="coAccDel(${i})">✕</button></td></tr>`).join("")}</tbody></table>
+    <span style="font-size:11.5px;color:var(--muted)">Opening balance = what the account held on the "as of" morning. Only movements dated on or after it are counted, so pick a date you have a statement for and record everything from then on.</span>`
   :`<span style="font-size:12px;color:var(--muted)">No accounts yet — add the first one.</span>`;
 }
 function openCompanyModal(id){
@@ -2883,7 +3048,7 @@ async function saveCompanyModal(id){
   const rec={name:$("#m_cname").value.trim(),tagline:$("#m_ctag").value.trim(),address:$("#m_caddr").value.trim(),
     contact:$("#m_ccontact").value.trim(),bank:$("#m_cbank").value};
   if(!rec.name) return alert("Company name is required.");
-  rec.accounts=COACC.filter(a=>a.bank||a.no);
+  rec.accounts=COACC.filter(a=>a.bank||a.no||a.label);
   if(id){ Object.assign(DB.companies.find(x=>x.id===id),rec); } else DB.companies.unshift({id:uid(),...rec});
   closeModal(); render(); await persist(saveCompanies);
 }
@@ -3874,6 +4039,17 @@ function renderQuote(v,q,p){
       <div class="field-row c2">
         <div class="field"><label>Bill to (client)</label><input value="${esc(q.extra?.billTo||p.client||"")}" placeholder="defaults to project client" onchange="exSet('${q.id}','billTo',this.value)"></div>
         <div class="field"><label>&nbsp;</label><button class="btn" onclick="openInvoiceImport('${q.id}')">⇐ Import from quotation (full / % down payment)</button></div>
+      </div>
+      <div class="field-row c3">
+        <div class="field"><label>Payment terms</label>
+          <select onchange="exSet('${q.id}','terms',this.value);render()">
+            ${[["","— none —"],["7","NET 7"],["14","NET 14"],["30","NET 30"],["45","NET 45"],["60","NET 60"]].map(([v,l])=>
+              `<option value="${v}" ${String(q.extra?.terms||"")===v?"selected":""}>${l}</option>`).join("")}
+          </select></div>
+        <div class="field"><label>Due date${q.extra?.terms&&!q.extra?.dueDate?" (from terms)":""}</label>
+          <input type="date" value="${esc(invDueDate(q))}" onchange="exSet('${q.id}','dueDate',this.value)"></div>
+        <div class="field"><label>&nbsp;</label>
+          <div style="font-size:11.5px;color:var(--muted);padding-top:10px">${invDueDate(q)?`Ages from <strong>${fmtDate(invDueDate(q))}</strong> in the receivables view.`:"No due date — receivables will age from the invoice date."}</div></div>
       </div>`:""}
       ${q.kind==="sj"?`
       <div class="field-row c3">
@@ -4762,6 +4938,7 @@ function printQuote(qid){
       [KIND_LABEL[q.kind||"quote"]+" no.",q.quoteNumber||"—"],["Title",q.title||"—"],
       ["Date",fmtDate(q.date)],["Exported",new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})]];
   if(isInv) meta.splice(2,0,["Bill to",q.extra?.billTo||p.client||"—"]);
+  if(isInv&&invDueDate(q)) meta.splice(3,0,["Due date",fmtDate(invDueDate(q))+(q.extra?.terms?" (NET "+q.extra.terms+")":"")]);
   if(isPO){ meta.splice(2,0,["Ship to",q.extra?.shipTo||"—"]); if(q.extra?.refRAP) meta.push(["Ref. RAP",q.extra.refRAP]); }
   if(isMOS&&q.extra?.refQuote) meta.push(["Ref. quotation",q.extra.refQuote]);
   if(revFamily(q).length>1){
@@ -5051,6 +5228,7 @@ function quoteAOA(q,p){
     ["Project",p.name],["Location",p.location||""],["Number",q.quoteNumber||""],
     ["Title",q.title||""],["Date",q.date||""],["Exported",todayISO()],
     ...(q.kind==="invoice"?[["Bill to",q.extra?.billTo||p.client||""]]:[]),
+    ...(q.kind==="invoice"&&invDueDate(q)?[["Due date",fmtDate(invDueDate(q))]]:[]),
     ...(q.kind==="po"?[["Distributor",q.extra?.distributor||""],["Ship to",q.extra?.shipTo||""]]:[]),[],
     ["No","Brand","Series / Type","Description","Qty","Unit","Unit Price (IDR)","Total (IDR)"]
   ];
