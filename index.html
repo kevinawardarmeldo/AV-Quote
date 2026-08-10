@@ -1985,20 +1985,40 @@ function agingBucket(dueOrDate,today){
 }
 const AGE={current:{label:"Not due yet",color:"var(--muted)"},d30:{label:"1–30 days",color:"var(--amber)"},
   d60:{label:"31–60 days",color:"#B4720E"},d60p:{label:"60+ days",color:"var(--red)"}};
+/* Settle receipts against invoices so aging points at the invoice that is actually
+   unpaid. A receipt created from an invoice carries refInvoiceId; anything else is
+   applied oldest-invoice-first (FIFO), which is how the money is meant to land. */
+function projInvoiceSettlement(pid){
+  const invs=countable(kindQuotes(pid,"invoice"))
+    .map(q=>({q,total:quoteGrand(q),paid:0}))
+    .sort((a,b)=>String(a.q.date).localeCompare(String(b.q.date)));
+  const byId={}; invs.forEach(x=>byId[x.q.id]=x);
+  let pool=0;
+  kindQuotes(pid,"receipt").forEach(r=>{
+    const amt=recSettled(r), link=r.extra?.refInvoiceId;
+    if(link&&byId[link]){
+      const t=byId[link], room=Math.max(0,t.total-t.paid), use=Math.min(room,amt);
+      t.paid+=use; pool+=amt-use;                 // overpayment spills into the pool
+    } else pool+=amt;
+  });
+  invs.forEach(x=>{ if(pool<=0) return;
+    const room=Math.max(0,x.total-x.paid), use=Math.min(room,pool);
+    x.paid+=use; pool-=use; });
+  return invs;
+}
 function arRows(cid){
   const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid);
-  const today=todayISO();
-  return projs.map(p=>{
-    const invs=countable(kindQuotes(p.id,"invoice"));
-    const invoiced=invs.reduce((a,q)=>a+quoteGrand(q),0);
-    const settled=kindQuotes(p.id,"receipt").reduce((a,q)=>a+recSettled(q),0);
-    const out=invoiced-settled;
-    if(out<=1) return null;
-    const oldest=invs.map(q=>invDueDate(q)||q.date).filter(Boolean).sort()[0]||p.created;
-    const due=invs.map(q=>invDueDate(q)).filter(Boolean).sort()[0];
-    return {p,invoiced,settled,out,ref:oldest,due,days:daysBetween(oldest,today),
-      bucket:agingBucket(oldest,today),hasDue:!!due};
-  }).filter(Boolean).sort((a,b)=>b.days-a.days);
+  const today=todayISO(), rows=[];
+  projs.forEach(p=>{
+    projInvoiceSettlement(p.id).forEach(x=>{
+      const out=x.total-x.paid;
+      if(out<=1) return;
+      const due=invDueDate(x.q), ref=due||x.q.date;
+      rows.push({p,q:x.q,invoiced:x.total,settled:x.paid,out,ref,due,hasDue:!!due,
+        days:daysBetween(ref,today),bucket:agingBucket(ref,today)});
+    });
+  });
+  return rows.sort((a,b)=>b.days-a.days);
 }
 function apRows(cid){
   const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid);
@@ -2702,17 +2722,17 @@ function arApHTML(cid){
     </div>
     ${agingTable("Receivables aging","",arB,arTot,"var(--amber)")}
     ${ar.length?`<div class="card" style="overflow-x:auto;margin-bottom:20px"><table class="grid" style="min-width:800px">
-      <thead><tr><th>Project / client</th><th style="width:120px">${noDue?"Due / invoiced":"Due"}</th><th style="width:110px">Age</th>
+      <thead><tr><th>Invoice · project</th><th style="width:120px">${noDue?"Due / invoiced":"Due"}</th><th style="width:110px">Age</th>
         <th class="t-right">Invoiced</th><th class="t-right">Received</th><th class="t-right">Outstanding</th></tr></thead>
-      <tbody>${ar.map(r=>`<tr class="rowlink" onclick="go({view:'project',projectId:'${r.p.id}',ptab:'billing'})">
-        <td style="font-weight:600">${esc(r.p.name)}<br><span style="font-size:11px;color:var(--muted)">${esc(r.p.client||"")}</span></td>
+      <tbody>${ar.map(r=>`<tr class="rowlink" onclick="go({view:'quote',quoteId:'${r.q.id}'})">
+        <td style="font-weight:600">${esc(r.q.quoteNumber||r.q.title||"Invoice")}<br><span style="font-size:11px;color:var(--muted)">${esc(r.p.name)} · ${esc(r.p.client||"")}</span></td>
         <td style="font-size:12px;color:var(--muted)">${fmtDate(r.ref)}${r.hasDue?"":' <span title="No due date on the invoice — aging from the invoice date" style="color:var(--amber)">*</span>'}</td>
         <td><span class="pill" style="background:transparent;color:${AGE[r.bucket].color};border:1px solid var(--line)">${r.days>0?r.days+" days":"not due"}</span></td>
         <td class="t-right num">${fmtRp(r.invoiced)}</td>
         <td class="t-right num" style="color:var(--muted)">${fmtRp(r.settled)}</td>
         <td class="t-right num" style="font-weight:700;color:${AGE[r.bucket].color}">${fmtRp(r.out)}</td></tr>`).join("")}
       </tbody></table></div>
-      ${noDue?`<p style="font-size:11.5px;color:var(--muted);margin:-12px 0 20px">* ${noDue} project(s) have invoices without a due date — set payment terms on the invoice and the age becomes days overdue instead of days since invoicing.</p>`:""}`
+      ${noDue?`<p style="font-size:11.5px;color:var(--muted);margin:-12px 0 20px">* ${noDue} invoice(s) have no due date — set payment terms on the invoice and the age becomes days overdue instead of days since invoicing.</p>`:""}`
     :`<div class="card" style="margin-bottom:20px"><div class="empty">Nothing outstanding — every invoice is settled.</div></div>`}
     ${agingTable("Payables aging (from purchase orders)",'',apB,apTot,"var(--red)")}
     ${ap.length?`<div class="card" style="overflow-x:auto"><table class="grid" style="min-width:800px">
@@ -3724,7 +3744,7 @@ async function receiptFromInvoice(invId){
   const inv=getQuote(invId), p=getProject(inv.projectId);
   const q={id:uid(),projectId:inv.projectId,quoteNumber:"",title:"Receipt — "+(inv.quoteNumber||inv.title),
     date:todayISO(),tax:false,kind:"receipt",discount:{type:"percent",value:0},sections:[],notes:"",
-    extra:{recvFrom:p?.client||"",amount:quoteGrand(inv),forText:"Payment of Invoice "+(inv.quoteNumber||inv.title)+" — "+p.name,payMethod:"Transfer"}};
+    extra:{recvFrom:p?.client||"",amount:quoteGrand(inv),forText:"Payment of Invoice "+(inv.quoteNumber||inv.title)+" — "+p.name,payMethod:"Transfer",refInvoiceId:inv.id}};
   DB.quotations.push(q);
   route.ptab="billing";
   await persist(saveQuotes,"Receipt created from invoice");
