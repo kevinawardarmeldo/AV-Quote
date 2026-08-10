@@ -260,12 +260,13 @@ const SHEETS = {
   Users:        ["ID","Email","Roles","Companies","Locked"],
   Clients:      ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies"],
   Assets:       ["ID","Asset Code","Brand","Series/Type","Description","Category","Serial Number","Owner","Owner Note","Condition","Location","Purchase Date","Purchase Cost","Daily Rate","Replacement Value","Company ID","Notes","Equipment ID"],
-  Bookings:     ["ID","Project ID","Kind","Brand","Series","Partner ID","Qty","From","To","Notes","Status","Units"]
+  Bookings:     ["ID","Project ID","Kind","Brand","Series","Partner ID","Qty","From","To","Notes","Status","Units"],
+  Transactions: ["ID","Company ID","Date","Direction","Category","Description","Amount","Account","To Account","Payee","Project ID","Reference","Notes","Recurring"]
 };
 
 /* ================= state ================= */
 let token=null, tokenExp=0, userEmail="", userPic="";
-let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[],distributors:[],companies:[],users:[],clients:[],assets:[],bookings:[]};
+let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[],distributors:[],companies:[],users:[],clients:[],assets:[],bookings:[],txns:[]};
 let route={view:"home",tab:"projects",ptab:"docs",projectId:null,quoteId:null,companyFilter:""};
 let dirty=false;
 
@@ -429,7 +430,7 @@ async function loadAll(){
       return {name:tabNames[i],rows:rows.length,bytes:new Blob([JSON.stringify(rows)]).size,maxCell,
               maxLabel:maxRow?String(maxRow[2]||maxRow[3]||maxRow[1]||maxRow[0]||""):""};
     })};
-  const [eq,pr,qu,nt,sp,di,co,us,cl,ast,bk]=res.valueRanges.map(v=>v.values||[]);
+  const [eq,pr,qu,nt,sp,di,co,us,cl,ast,bk,tx]=res.valueRanges.map(v=>v.values||[]);
   DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||"",distributor:r[9]||"",
     companies:(r[10]||"").split(",").filter(Boolean),costs:(()=>{try{return JSON.parse(r[11]||"{}")}catch(e){return {}}})(),
     prices:(()=>{try{return JSON.parse(r[12]||"{}")}catch(e){return {}}})()}));
@@ -462,6 +463,9 @@ async function loadAll(){
   DB.bookings=(bk||[]).filter(r=>r[0]).map(r=>({id:r[0],projectId:r[1]||"",kind:r[2]||"asset",brand:r[3]||"",series:r[4]||"",
     partnerId:r[5]||"",qty:Number(r[6])||1,from:r[7]||"",to:r[8]||"",notes:r[9]||"",status:r[10]||"reserved",
     units:(()=>{try{return r[11]?JSON.parse(r[11]):[]}catch(e){return []}})()}));
+  DB.txns=(tx||[]).filter(r=>r[0]).map(r=>({id:r[0],companyId:r[1]||"",date:r[2]||"",dir:r[3]||"out",category:r[4]||"",
+    description:r[5]||"",amount:Number(r[6])||0,account:r[7]||"",toAccount:r[8]||"",payee:r[9]||"",
+    projectId:r[10]||"",reference:r[11]||"",notes:r[12]||"",recurring:String(r[13]||"")==="1"}));
 }
 /* ---------------------------------------------------------------
    Concurrency-safe saving.
@@ -544,6 +548,7 @@ const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.t
 const saveUsers=()=>saveTab("Users",DB.users.map(u=>[u.id,u.email,u.roles.join(","),u.companies.join(","),u.locked?"TRUE":"FALSE"]));
 const saveClients=()=>saveTab("Clients",DB.clients.map(c=>[c.id,c.name,c.contact,c.phone,c.email,c.address,c.notes,(c.companies||[]).join(",")]));
 const saveAssets=()=>saveTab("Assets",DB.assets.map(a=>[a.id,a.code,a.brand,a.series,a.description,a.category,a.serial,a.owner,a.ownerNote,a.condition,a.location,a.purchaseDate,a.purchaseCost||0,a.dailyRate||0,a.replacement||0,a.companyId||"",a.notes||"",a.equipmentId||""]));
+const saveTxns=()=>saveTab("Transactions",DB.txns.map(t=>[t.id,t.companyId,t.date,t.dir,t.category,t.description,t.amount||0,t.account||"",t.toAccount||"",t.payee||"",t.projectId||"",t.reference||"",t.notes||"",t.recurring?"1":""]));
 const saveBookings=()=>saveTab("Bookings",DB.bookings.map(b=>[b.id,b.projectId,b.kind,b.brand,b.series,b.partnerId,b.qty||1,b.from,b.to,b.notes||"",b.status||"reserved",JSON.stringify(b.units||[])]));
 async function persist(fn,msg){
   try{
@@ -600,7 +605,7 @@ let ACTIVE_COMPANY=null; // company issuer chosen after login
 const ROLE_LABEL={admin:"Administrator",engineer:"Engineer",adminproject:"Admin Project",finance:"Finance",purchasing:"Purchasing"};
 const PERMS={
   equipment:["admin","purchasing"], distributors:["admin","purchasing"],
-  templates:["admin","adminproject"], companies:["admin"], users:["admin"], clients:["admin","adminproject"], dashboard:["admin","finance","purchasing"], assets:["admin","adminproject","purchasing"], book:["admin","adminproject","engineer"],
+  templates:["admin","adminproject"], companies:["admin"], users:["admin"], clients:["admin","adminproject"], dashboard:["admin","finance","purchasing"], assets:["admin","adminproject","purchasing"], book:["admin","adminproject","engineer"], txns:["admin","finance"],
   quote:["admin","engineer","adminproject"], rap:["admin","adminproject","purchasing"],
   billing:["admin","finance"], po:["admin","purchasing"], sj:["admin","adminproject","purchasing"], ba:["admin","adminproject"], manage:["admin","adminproject"]
 };
@@ -729,7 +734,7 @@ function selectCompany(id){
 
 /* ================= HOME ================= */
 function renderHome(v){
-  const tabPerm={projects:null,equipment:"equipment",distributors:"distributors",templates:"templates",companies:"companies",users:"users",clients:"clients",dashboard:"dashboard",assets:"assets"};
+  const tabPerm={projects:null,equipment:"equipment",distributors:"distributors",templates:"templates",companies:"companies",users:"users",clients:"clients",dashboard:"dashboard",assets:"assets",txns:"txns"};
   if(tabPerm[route.tab]&&!can(tabPerm[route.tab])) route.tab="projects";
   const tab=route.tab;
   v.innerHTML=`
@@ -747,6 +752,7 @@ function renderHome(v){
          :tab==="users"?`<button class="btn primary" onclick="openUserModal()">+ Add user</button>`
          :tab==="clients"?`<button class="btn primary" onclick="openClientModal()">+ Add client</button>`
          :tab==="assets"?`<button class="btn primary" onclick="openAssetModal()">+ Add asset</button>`
+         :tab==="txns"?`<button class="btn primary" onclick="openTxnModal()">+ Add transaction</button>`
          :`<button class="btn primary" onclick="openTemplateModal()">+ New template</button>`}
       </div>
     </div>
@@ -755,6 +761,7 @@ function renderHome(v){
       ${can("dashboard")?`<button class="tab ${tab==="dashboard"?"active":""}" onclick="route.tab='dashboard';render()">📊 Dashboard</button>`:""}
       ${can("equipment")?`<button class="tab ${tab==="equipment"?"active":""}" onclick="route.tab='equipment';render()">Equipment</button>`:""}
       ${can("assets")?`<button class="tab ${tab==="assets"?"active":""}" onclick="route.tab='assets';render()">Assets</button>`:""}
+      ${can("txns")?`<button class="tab ${tab==="txns"?"active":""}" onclick="route.tab='txns';render()">💵 Cash book</button>`:""}
       ${can("clients")?`<button class="tab ${tab==="clients"?"active":""}" onclick="route.tab='clients';render()">Clients</button>`:""}
       ${can("distributors")?`<button class="tab ${tab==="distributors"?"active":""}" onclick="route.tab='distributors';render()">Partners</button>`:""}
       ${can("templates")?`<button class="tab ${tab==="templates"?"active":""}" onclick="route.tab='templates';render()">Note templates</button>`:""}
@@ -771,6 +778,7 @@ function renderHome(v){
   else if(tab==="clients") renderClientsTab(b);
   else if(tab==="dashboard") renderDashboardTab(b);
   else if(tab==="assets") renderAssetsTab(b);
+  else if(tab==="txns") renderTxnsTab(b);
   else renderTemplatesTab(b);
 }
 async function reloadData(){ try{ await loadAll(); lastSig=""; render(); toast("Data reloaded from Sheet"); }catch(e){ alert(e.message); } }
@@ -1234,6 +1242,13 @@ function openAcctTransactions(accId){
         note:p.label||""});
     });
   });
+  txInYear(ACTIVE_COMPANY,dashYear).forEach(t=>{
+    const hit=[];
+    if(match(t.account)) hit.push({dir:t.dir==="in"?"in":"out",amt:t.amount});
+    if(t.dir==="transfer"&&match(t.toAccount)) hit.push({dir:"in",amt:t.amount});
+    hit.forEach(h=>tx.push({date:t.date,dir:h.dir,amount:h.amt,doc:txCatLabel(t.category),
+      who:t.payee||"",proj:t.description||"",qid:"",note:t.dir==="transfer"?"transfer":""}));
+  });
   tx.sort((a,b)=>String(a.date).localeCompare(String(b.date)));
   const tin=tx.filter(t=>t.dir==="in").reduce((a,t)=>a+t.amount,0);
   const tout=tx.filter(t=>t.dir==="out").reduce((a,t)=>a+t.amount,0);
@@ -1241,7 +1256,7 @@ function openAcctTransactions(accId){
     ${tx.length?`<div style="overflow-x:auto"><table class="grid" style="min-width:640px">
       <thead><tr><th style="width:100px">Date</th><th style="width:56px"></th><th>Document</th><th>Counterparty</th><th class="t-right" style="width:140px">Amount</th></tr></thead>
       <tbody>${tx.map(t=>`
-        <tr class="rowlink" onclick="closeModal();go({view:'quote',quoteId:'${t.qid}'})">
+        <tr ${t.qid?`class="rowlink" onclick="closeModal();go({view:'quote',quoteId:'${t.qid}'})"`:""}>
           <td class="num" style="font-size:12.5px">${fmtDate(t.date)}</td>
           <td>${t.dir==="in"?'<span class="pill">IN</span>':'<span class="pill amber">OUT</span>'}</td>
           <td style="font-weight:600">${esc(t.doc)}<br><span style="font-size:11px;color:var(--muted)">${esc(t.proj)}${t.note?" · "+esc(t.note):""}</span></td>
@@ -1299,6 +1314,9 @@ function renderDashboardTab(b){
   recs.forEach(r=>{ if(r.date&&r.date.startsWith(dashYear)) inM[Number(r.date.slice(5,7))-1]+=recCash(r); });   // real cash only
   costDocs.forEach(o=>poPayments(o).forEach(p=>{ const d=p.date;
     if(d&&String(d).startsWith(dashYear)) outM[Number(String(d).slice(5,7))-1]+=(Number(p.amount)||0); }));
+  txInYear(ACTIVE_COMPANY,dashYear).forEach(t=>{ const m=Number(String(t.date).slice(5,7))-1;
+    if(m<0||m>11) return;
+    if(t.dir==="out") outM[m]+=t.amount; else if(t.dir==="in") inM[m]+=t.amount; });
   const maxV=Math.max(1,...inM,...outM);
   const months=["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
   const bars=months.map((m,i)=>`
@@ -1341,6 +1359,17 @@ function renderDashboardTab(b){
       ${kpi("Payables (outstanding)",payable,"var(--red)",costDocs.filter(q=>poOutstanding(q)>0).length+" doc(s) with balance")}
     </div>
 
+    ${(()=>{
+      const d=pnlData(ACTIVE_COMPANY,dashYear);
+      if(!d.revenue&&!d.opex) return "";
+      return `<div class="card" style="margin-bottom:20px;border-left:3px solid var(--ink)">
+        <div class="card-pad" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <div><span class="eyebrow">Company result ${dashYear} · cash basis</span>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px">Revenue ${fmtRpShort(d.revenue)} − direct ${fmtRpShort(d.direct)} − opex ${fmtRpShort(d.opex)}</div></div>
+          <div style="display:flex;gap:22px;flex-wrap:wrap;text-align:right">
+            <div><div class="eyebrow">Gross margin</div><div class="num" style="font-size:18px;font-weight:800;color:${d.gross>=0?"var(--accent-dark)":"var(--red)"}">${fmtRpShort(d.gross)}${d.grossPct!==null?` <span style="font-size:12px;color:var(--muted)">${Math.round(d.grossPct*100)}%</span>`:""}</div></div>
+            <div><div class="eyebrow">Net profit</div><div class="num" style="font-size:18px;font-weight:800;color:${d.net>=0?"var(--accent-dark)":"var(--red)"}">${fmtRpShort(d.net)}</div></div>
+          </div></div></div>`;})()}
     ${(()=>{
       const lines=Object.keys(PTYPE).map(t=>{
         const tp=projs.filter(p=>projType(p)===t), ids=new Set(tp.map(p=>p.id));
@@ -1458,6 +1487,11 @@ function renderDashboardTab(b){
       costDocs.forEach(o=>poPayments(o).forEach(p=>{ if(!String(p.date||"").startsWith(dashYear))return;
         const k=(p.fromAccount&&mv[p.fromAccount])?p.fromAccount:"_none";
         mv[k].out+=Number(p.amount)||0; }));
+      txInYear(ACTIVE_COMPANY,dashYear).forEach(t=>{
+        const k=(t.account&&mv[t.account])?t.account:"_none";
+        if(t.dir==="out") mv[k].out+=t.amount;
+        else if(t.dir==="in") mv[k].in+=t.amount;
+        else if(t.dir==="transfer"){ mv[k].out+=t.amount; const k2=(t.toAccount&&mv[t.toAccount])?t.toAccount:"_none"; mv[k2].in+=t.amount; } });
       const anyMove=Object.values(mv).some(v=>v.in||v.out);
       if(!taxTotal&&!anyMove) return "";
       return `<div style="display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-bottom:20px">
@@ -1908,6 +1942,41 @@ const bkDispatchState=b=>{const n=bkUnits(b).length, back=bkReturned(b);
 const DSTATE={pending:{label:"not dispatched",bg:"#EDF1EC",fg:"#5C665F"},out:{label:"out",bg:"#E2E9F3",fg:"#2C4A6E"},
   partial:{label:"partly back",bg:"#F7EDDA",fg:"#B4720E"},returned:{label:"returned",bg:"var(--accent-soft)",fg:"var(--accent-dark)"}};
 const dstatePill=b=>{const x=DSTATE[bkDispatchState(b)];return `<span class="pill" style="background:${x.bg};color:${x.fg}">${x.label}</span>`;};
+/* ---------- transaction categories ----------
+   group decides where a line lands: opex/income hit the income statement,
+   capex is an asset purchase, equity is owner money — neither touches profit. */
+const TXCAT={
+  // operating expenses
+  salary:      {label:"Salary & honor",        group:"opex"},
+  office:      {label:"Office supplies",       group:"opex"},
+  rent:        {label:"Rent & utilities",      group:"opex"},
+  transport:   {label:"Transport & fuel",      group:"opex"},
+  meals:       {label:"Meals & entertainment", group:"opex"},
+  repair:      {label:"Repair & maintenance",  group:"opex"},
+  marketing:   {label:"Marketing",             group:"opex"},
+  prof:        {label:"Professional fees",     group:"opex"},
+  bankfee:     {label:"Bank charges",          group:"opex"},
+  tax:         {label:"Tax payments",          group:"opex"},
+  petty:       {label:"Petty cash spending",   group:"opex"},
+  otherexp:    {label:"Other expense",         group:"opex"},
+  // income that isn't a project receipt
+  otherinc:    {label:"Other income",          group:"income"},
+  interest:    {label:"Interest income",       group:"income"},
+  assetsale:   {label:"Equipment sold",        group:"income"},
+  // outside the income statement
+  capex:       {label:"Equipment purchase (capex)", group:"capex"},
+  capital:     {label:"Capital injection",     group:"equity"},
+  draw:        {label:"Owner's draw",          group:"equity"},
+  loanin:      {label:"Loan received",         group:"financing"},
+  loanout:     {label:"Loan repayment",        group:"financing"}
+};
+const txCatGroup=c=>TXCAT[c]?.group||"opex";
+const txCatLabel=c=>TXCAT[c]?.label||c||"—";
+const TXDIR={in:{label:"Money in",fg:"var(--accent-dark)",bg:"var(--accent-soft)",sign:1},
+             out:{label:"Money out",fg:"#B4720E",bg:"#F7EDDA",sign:-1},
+             transfer:{label:"Transfer",fg:"#2C4A6E",bg:"#E2E9F3",sign:0}};
+const txOfCompany=cid=>DB.txns.filter(t=>(t.companyId||DB.companies[0]?.id)===cid);
+const txInYear=(cid,y)=>txOfCompany(cid).filter(t=>String(t.date||"").startsWith(String(y)));
 const assetById=id=>DB.assets.find(a=>a.id===id);
 /* daily rental rate: a manual rate always wins; otherwise 2,5% of purchase cost,
    rounded to the nearest 1.000 — so a unit is never worth nothing in the reports */
@@ -2318,6 +2387,302 @@ function avRender(cid){
     ${!models.length&&!crew.length?`<div class="empty">No assets or crew yet.</div>`:""}`;
 }
 
+/* ================= CASH BOOK ================= */
+let txYear=new Date().getFullYear(), txMonth="", txCatFilter="", txDirFilter="", txSearch="", txView="book";
+function txFiltered(cid){
+  return txInYear(cid,txYear).filter(t=>{
+    if(txMonth&&String(t.date).slice(5,7)!==txMonth) return false;
+    if(txDirFilter&&t.dir!==txDirFilter) return false;
+    if(txCatFilter&&t.category!==txCatFilter) return false;
+    const q=txSearch.trim().toLowerCase();
+    if(q&&!((t.description+" "+t.payee+" "+txCatLabel(t.category)+" "+(t.reference||"")).toLowerCase().includes(q))) return false;
+    return true;
+  }).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+}
+const acctName=(cid,id)=>{ if(id==="_petty") return "Petty cash";
+  const a=coAccounts(cid).find(x=>x.id===id); return a?(a.label||a.bank):"—"; };
+function renderTxnsTab(b){
+  const cid=ACTIVE_COMPANY;
+  const years=[...new Set(txOfCompany(cid).map(t=>String(t.date).slice(0,4)).filter(Boolean))].sort().reverse();
+  if(!years.includes(String(txYear))) years.unshift(String(txYear));
+  b.innerHTML=`
+    <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+      ${[["book","Cash book"],["is","📊 Income statement"],["cf","💧 Cash flow"],["rec","🔁 Recurring"]].map(([k,l])=>`
+        <button class="btn small" style="border-radius:99px;${txView===k?"background:var(--ink);color:#fff;border-color:var(--ink)":""}"
+          onclick="txView='${k}';render()">${l}</button>`).join("")}
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <select onchange="txYear=Number(this.value);render()" style="border:1px solid var(--line);border-radius:8px;padding:8px 10px">
+        ${years.map(y=>`<option value="${y}" ${String(txYear)===y?"selected":""}>${y}</option>`).join("")}
+      </select>
+      ${txView==="book"?`
+      <select onchange="txMonth=this.value;renderTxBody()" style="border:1px solid var(--line);border-radius:8px;padding:8px 10px">
+        <option value="">All months</option>
+        ${["01","02","03","04","05","06","07","08","09","10","11","12"].map((m,i)=>`<option value="${m}" ${txMonth===m?"selected":""}>${["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"][i]}</option>`).join("")}
+      </select>
+      <input id="txSearch" placeholder="Search description, payee, reference…" value="${esc(txSearch)}"
+        oninput="txSearch=this.value;renderTxBody()" style="flex:1;min-width:180px;border:1px solid var(--line);border-radius:8px;padding:9px 12px">`:""}
+    </div>
+    <div id="txBody"></div>`;
+  renderTxBody();
+}
+function renderTxBody(){
+  const el=$("#txBody"); if(!el) return;
+  const cid=ACTIVE_COMPANY;
+  if(txView==="is")  return el.innerHTML=incomeStatementHTML(cid,txYear);
+  if(txView==="cf")  return el.innerHTML=cashFlowHTML(cid,txYear);
+  if(txView==="rec") return el.innerHTML=recurringHTML(cid);
+  const list=txFiltered(cid);
+  const sum=(d)=>list.filter(t=>t.dir===d).reduce((a,t)=>a+t.amount,0);
+  const tin=sum("in"), tout=sum("out");
+  el.innerHTML=`
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      ${[["Money in","Rp "+fmtRpShort(tin),"var(--accent-dark)"],["Money out","Rp "+fmtRpShort(tout),"var(--amber)"],
+         ["Net","Rp "+fmtRpShort(tin-tout),tin-tout>=0?"var(--accent-dark)":"var(--red)"],
+         ["Entries",list.length,"var(--ink)"]].map(([l,v,c])=>`
+        <div class="card card-pad" style="flex:1;min-width:140px"><div class="eyebrow">${l}</div>
+          <div class="num" style="font-size:19px;font-weight:800;margin-top:4px;color:${c}">${v}</div></div>`).join("")}
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+      ${[["","All"],["in","Money in"],["out","Money out"],["transfer","Transfers"]].map(([k,l])=>`
+        <button class="btn small" style="border-radius:99px;${txDirFilter===k?"background:var(--ink);color:#fff;border-color:var(--ink)":""}"
+          onclick="txDirFilter='${k}';renderTxBody()">${l}</button>`).join("")}
+      ${txCatFilter?`<button class="btn ghost small" onclick="txCatFilter='';renderTxBody()">✕ ${esc(txCatLabel(txCatFilter))}</button>`:""}
+    </div>
+    ${list.length?`<div class="card" style="overflow-x:auto"><table class="grid" style="min-width:940px">
+      <thead><tr><th style="width:100px">Date</th><th>Description</th><th style="width:150px">Category</th><th style="width:140px">Account</th>
+        <th class="t-right" style="width:140px">Amount</th><th style="width:70px"></th></tr></thead>
+      <tbody>${list.map(t=>{
+        const d=TXDIR[t.dir]||TXDIR.out;
+        return `<tr class="rowlink" onclick="openTxnModal('${t.id}')">
+          <td class="num" style="font-size:12.5px">${fmtDate(t.date)}</td>
+          <td style="font-weight:600">${esc(t.description||"—")}
+            <br><span style="font-size:11px;color:var(--muted)">${esc(t.payee||"")}${t.projectId?` · <span style="color:var(--accent-dark)">${esc(getProject(t.projectId)?.name||"")}</span>`:""}${t.reference?" · ref "+esc(t.reference):""}</span></td>
+          <td><span class="pill" style="background:${d.bg};color:${d.fg}">${esc(txCatLabel(t.category))}</span></td>
+          <td style="font-size:12px;color:var(--muted)">${esc(acctName(cid,t.account))}${t.dir==="transfer"?" → "+esc(acctName(cid,t.toAccount)):""}</td>
+          <td class="t-right num" style="font-weight:700;color:${t.dir==="in"?"var(--accent-dark)":t.dir==="out"?"var(--amber)":"var(--muted)"}">
+            ${t.dir==="in"?"+":t.dir==="out"?"−":"⇄"} ${fmtRp(t.amount)}</td>
+          <td class="t-right"><button class="btn ghost small" title="Duplicate" onclick="event.stopPropagation();txDuplicate('${t.id}')">⧉</button></td>
+        </tr>`;}).join("")}
+      </tbody></table></div>`
+    :`<div class="card"><div class="empty"><span class="eyebrow">No transactions ${txMonth||txSearch||txDirFilter?"match the filter":"yet"}</span>Record everything that isn't a project document here — petty cash, reimbursements, office supplies, rent, salaries. Client receipts and supplier POs already live on their projects; logging them again would double-count.</div></div>`}`;
+}
+function openTxnModal(id){
+  const t=DB.txns.find(x=>x.id===id), cid=ACTIVE_COMPANY;
+  const accOpts=(sel)=>`<option value="">— select —</option>
+    ${coAccounts(cid).map(a=>`<option value="${a.id}" ${sel===a.id?"selected":""}>${esc(a.label||a.bank)} ${esc(a.no||"")}</option>`).join("")}
+    <option value="_petty" ${sel==="_petty"?"selected":""}>Petty cash (on hand)</option>`;
+  const projOpts=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid)
+    .map(p=>`<option value="${p.id}" ${t?.projectId===p.id?"selected":""}>${esc(p.name)}</option>`).join("");
+  openModal(t?"Edit transaction":"Add transaction",`
+    <div class="field-row c3">
+      <div class="field"><label>Date</label><input id="t_date" type="date" value="${esc(t?.date||todayISO())}"></div>
+      <div class="field"><label>Direction</label>
+        <select id="t_dir" onchange="txDirChanged()">
+          ${Object.entries(TXDIR).map(([k,v])=>`<option value="${k}" ${(t?.dir||"out")===k?"selected":""}>${v.label}</option>`).join("")}
+        </select></div>
+      <div class="field"><label>Amount (IDR)</label><input id="t_amount" type="number" min="0" value="${t?.amount||""}"></div>
+    </div>
+    <div class="field"><label>Category</label>
+      <select id="t_cat">${Object.entries(TXCAT).map(([k,v])=>`<option value="${k}" ${(t?.category||"office")===k?"selected":""}>${v.label}${v.group!=="opex"?"  ("+v.group+")":""}</option>`).join("")}</select>
+      <span id="t_catHint" style="font-size:11.5px;color:var(--muted)"></span></div>
+    <div class="field"><label>Description</label><input id="t_desc" value="${esc(t?.description||"")}" placeholder="e.g. Beli kabel XLR 5m"></div>
+    <div class="field-row c2">
+      <div class="field"><label id="t_acctLabel">Paid from / received into</label><select id="t_acct">${accOpts(t?.account)}</select></div>
+      <div class="field" id="t_toRow" style="display:${t?.dir==="transfer"?"block":"none"}"><label>To account</label><select id="t_toacct">${accOpts(t?.toAccount)}</select></div>
+    </div>
+    <div class="field-row c2">
+      <div class="field"><label>Payee / from whom</label><input id="t_payee" value="${esc(t?.payee||"")}" placeholder="e.g. Toko Sinar / Budi"></div>
+      <div class="field"><label>Reference (nota no. or Drive link)</label><input id="t_ref" value="${esc(t?.reference||"")}"></div>
+    </div>
+    <div class="field"><label>Charge to a project (optional)</label>
+      <select id="t_proj"><option value="">— company overhead, not a project —</option>${projOpts}</select>
+      <span style="font-size:11.5px;color:var(--muted)">Tagged costs join that project's margin. Don't tag crew fees or supplier bills already covered by a PO.</span></div>
+    <div class="field"><label style="display:flex;align-items:center;gap:8px;font-weight:400">
+      <input type="checkbox" id="t_rec" ${t?.recurring?"checked":""}> Repeats monthly (rent, salary, internet…)</label>
+      <span style="font-size:11.5px;color:var(--muted)">Kept in the Recurring list — you post each month's batch yourself, nothing is created automatically.</span></div>
+    <div class="field"><label>Notes</label><textarea id="t_notes" rows="2">${esc(t?.notes||"")}</textarea></div>`,
+    `${t?`<button class="btn ghost danger" onclick="txDelete('${t.id}')">Delete</button>`:""}
+     <button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="saveTxnModal('${id||""}')">${t?"Save changes":"Add"}</button>`,true);
+  txDirChanged();
+}
+function txDirChanged(){
+  const dir=$("#t_dir")?.value, row=$("#t_toRow"), lbl=$("#t_acctLabel"), hint=$("#t_catHint");
+  if(row) row.style.display=dir==="transfer"?"block":"none";
+  if(lbl) lbl.textContent=dir==="in"?"Received into":dir==="transfer"?"From account":"Paid from";
+  if(hint){
+    const g=txCatGroup($("#t_cat")?.value);
+    hint.innerHTML=dir==="transfer"?"Transfers move money between your own accounts — they never touch profit."
+      :g==="capex"?"Capex buys an asset — it stays out of the income statement. Add the unit in the Assets tab too."
+      :g==="equity"?"Owner money — shown in cash flow, excluded from profit."
+      :g==="financing"?"Financing — shown in cash flow, excluded from profit."
+      :g==="income"?"Counts as other income in the income statement.":"Counts as an operating expense.";
+  }
+}
+async function saveTxnModal(id){
+  const rec={companyId:ACTIVE_COMPANY,date:$("#t_date").value,dir:$("#t_dir").value,category:$("#t_cat").value,
+    description:$("#t_desc").value.trim(),amount:Number($("#t_amount").value)||0,
+    account:$("#t_acct").value,toAccount:$("#t_dir").value==="transfer"?$("#t_toacct").value:"",
+    payee:$("#t_payee").value.trim(),projectId:$("#t_proj").value,reference:$("#t_ref").value.trim(),
+    notes:$("#t_notes").value.trim(),recurring:$("#t_rec").checked};
+  if(!rec.date) return alert("Pick a date.");
+  if(!rec.amount) return alert("Enter an amount.");
+  if(rec.dir==="transfer"&&(!rec.account||!rec.toAccount||rec.account===rec.toAccount))
+    return alert("A transfer needs two different accounts.");
+  if(id) Object.assign(DB.txns.find(x=>x.id===id),rec);
+  else DB.txns.unshift({id:uid(),...rec});
+  closeModal(); render(); await persist(saveTxns);
+}
+async function txDelete(id){
+  if(!confirm("Delete this transaction?")) return;
+  DB.txns=DB.txns.filter(x=>x.id!==id); closeModal(); render(); await persist(saveTxns,"Transaction deleted");
+}
+async function txDuplicate(id){
+  const t=DB.txns.find(x=>x.id===id);
+  DB.txns.unshift({...t,id:uid(),date:todayISO(),reference:""});
+  render(); await persist(saveTxns,"Copied — check the date and amount");
+}
+/* recurring: a template list you post from, never automatic */
+function recurringHTML(cid){
+  const recs=txOfCompany(cid).filter(t=>t.recurring);
+  const ym=new Date().toISOString().slice(0,7);
+  const postedThisMonth=t=>txOfCompany(cid).some(x=>!x.recurring&&x.category===t.category&&x.description===t.description&&String(x.date).startsWith(ym));
+  const pending=recs.filter(t=>!postedThisMonth(t));
+  return `
+    <div class="card card-pad" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div><span class="eyebrow">Recurring entries</span>
+          <div style="font-size:12.5px;color:var(--muted);margin-top:4px">${recs.length} template(s) · ${pending.length} not yet posted for ${fmtDate(ym+"-01").replace(/^\d+ /,"")}</div></div>
+        ${pending.length?`<button class="btn primary small" onclick="postRecurring()">Post ${pending.length} entr${pending.length===1?"y":"ies"} for this month</button>`:""}
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:8px">Nothing posts by itself — review the list, then post. Amounts carry over; edit any entry afterwards if it changed.</div>
+    </div>
+    ${recs.length?`<div class="card" style="overflow-x:auto"><table class="grid">
+      <thead><tr><th>Description</th><th>Category</th><th>Account</th><th class="t-right">Amount</th><th style="width:130px">This month</th></tr></thead>
+      <tbody>${recs.map(t=>`<tr class="rowlink" onclick="openTxnModal('${t.id}')">
+        <td style="font-weight:600">${esc(t.description||"—")}<br><span style="font-size:11px;color:var(--muted)">${esc(t.payee||"")}</span></td>
+        <td>${esc(txCatLabel(t.category))}</td>
+        <td style="font-size:12px;color:var(--muted)">${esc(acctName(cid,t.account))}</td>
+        <td class="t-right num" style="font-weight:600">${fmtRp(t.amount)}</td>
+        <td>${postedThisMonth(t)?'<span class="pill">posted</span>':'<span class="pill amber">pending</span>'}</td></tr>`).join("")}
+      </tbody></table></div>`
+    :`<div class="card"><div class="empty"><span class="eyebrow">No recurring entries</span>Tick “Repeats monthly” on a transaction — rent, salaries, internet — and it appears here as a template to post each month.</div></div>`}`;
+}
+async function postRecurring(){
+  const cid=ACTIVE_COMPANY, ym=new Date().toISOString().slice(0,7);
+  const recs=txOfCompany(cid).filter(t=>t.recurring);
+  const posted=recs.filter(t=>!txOfCompany(cid).some(x=>!x.recurring&&x.category===t.category&&x.description===t.description&&String(x.date).startsWith(ym)));
+  posted.forEach(t=>DB.txns.unshift({...t,id:uid(),date:ym+"-"+String(new Date().getDate()).padStart(2,"0"),recurring:false,reference:""}));
+  render(); await persist(saveTxns,posted.length+" recurring entr"+(posted.length===1?"y":"ies")+" posted — review the amounts");
+}
+/* ---------- statements (cash basis, derived — management reporting) ---------- */
+function pnlData(cid,year){
+  const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid);
+  const pids=new Set(projs.map(p=>p.id));
+  const inYear=d=>String(d||"").startsWith(String(year));
+  // revenue = cash actually received on project receipts
+  let revenue=0, withheld=0;
+  DB.quotations.filter(q=>pids.has(q.projectId)&&q.kind==="receipt"&&inYear(q.date)).forEach(r=>{
+    revenue+=recCash(r); withheld+=recDeductTotal(r); });
+  // direct costs = PO payments actually made
+  let direct=0;
+  DB.quotations.filter(q=>pids.has(q.projectId)&&q.kind==="po").forEach(o=>
+    poPayments(o).forEach(p=>{ if(inYear(p.date)) direct+=Number(p.amount)||0; }));
+  // project-tagged transactions are direct too
+  const tx=txInYear(cid,year);
+  const taggedExp=tx.filter(t=>t.dir==="out"&&t.projectId&&txCatGroup(t.category)==="opex").reduce((a,t)=>a+t.amount,0);
+  direct+=taggedExp;
+  // operating expenses = untagged opex
+  const opexRows={};
+  tx.filter(t=>t.dir==="out"&&!t.projectId&&txCatGroup(t.category)==="opex")
+    .forEach(t=>{ opexRows[t.category]=(opexRows[t.category]||0)+t.amount; });
+  const opex=Object.values(opexRows).reduce((a,b)=>a+b,0);
+  // other income
+  const incRows={};
+  tx.filter(t=>t.dir==="in"&&txCatGroup(t.category)==="income")
+    .forEach(t=>{ incRows[t.category]=(incRows[t.category]||0)+t.amount; });
+  const otherInc=Object.values(incRows).reduce((a,b)=>a+b,0);
+  const gross=revenue-direct;
+  return {revenue,withheld,direct,taggedExp,gross,opexRows,opex,incRows,otherInc,net:gross+otherInc-opex,
+    grossPct:revenue?gross/revenue:null};
+}
+function incomeStatementHTML(cid,year){
+  const d=pnlData(cid,year);
+  const line=(label,val,opt={})=>`<tr style="${opt.bold?"font-weight:700":""}${opt.top?";border-top:2px solid var(--line)":""}">
+    <td style="${opt.indent?"padding-left:22px;color:var(--muted)":""}">${label}</td>
+    <td class="t-right num" style="${opt.color?"color:"+opt.color:""}">${opt.dash&&!val?"—":(opt.neg&&val?"(":"")+fmtRp(Math.abs(val))+(opt.neg&&val?")":"")}</td></tr>`;
+  const breakeven=d.grossPct&&d.grossPct>0?d.opex/d.grossPct:null;
+  return `
+    <div class="card card-pad" style="margin-bottom:14px">
+      <span class="eyebrow">Income statement ${year} · cash basis</span>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">Revenue counted when received, costs when paid — the version you can check against your bank.</div>
+    </div>
+    <div class="card" style="overflow-x:auto"><table class="grid" style="min-width:520px">
+      <tbody>
+        ${line("Project revenue (cash received)",d.revenue,{bold:true})}
+        ${d.withheld?line("PPh / fees withheld by clients (not received)",d.withheld,{indent:true,color:"var(--muted)"}):""}
+        ${line("Direct project costs",d.direct,{neg:true,color:"var(--amber)"})}
+        ${d.taggedExp?line("— of which project-tagged expenses",d.taggedExp,{indent:true}):""}
+        ${line("Gross margin",d.gross,{bold:true,top:true,color:d.gross>=0?"var(--accent-dark)":"var(--red)"})}
+        ${d.grossPct!==null?`<tr><td style="padding-left:22px;color:var(--muted)">Gross margin %</td>
+          <td class="t-right num" style="color:var(--muted)">${Math.round(d.grossPct*100)}%</td></tr>`:""}
+        <tr><td colspan="2" style="padding-top:14px"><span class="eyebrow">Operating expenses</span></td></tr>
+        ${Object.entries(d.opexRows).sort((a,b)=>b[1]-a[1]).map(([k,v])=>
+          `<tr class="rowlink" onclick="txView='book';txCatFilter='${k}';render()"><td style="padding-left:22px">${esc(txCatLabel(k))}</td>
+           <td class="t-right num">${fmtRp(v)}</td></tr>`).join("")||`<tr><td style="padding-left:22px;color:var(--muted)">None recorded</td><td class="t-right num">—</td></tr>`}
+        ${line("Total operating expenses",d.opex,{bold:true,neg:true,color:"var(--amber)"})}
+        ${d.otherInc?`<tr><td colspan="2" style="padding-top:14px"><span class="eyebrow">Other income</span></td></tr>
+          ${Object.entries(d.incRows).map(([k,v])=>`<tr><td style="padding-left:22px">${esc(txCatLabel(k))}</td><td class="t-right num">${fmtRp(v)}</td></tr>`).join("")}`:""}
+        ${line("NET PROFIT",d.net,{bold:true,top:true,color:d.net>=0?"var(--accent-dark)":"var(--red)"})}
+      </tbody></table></div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:14px">
+      ${[["Gross margin %",d.grossPct===null?"—":Math.round(d.grossPct*100)+"%"],
+         ["Monthly opex (avg)","Rp "+fmtRpShort(d.opex/12)],
+         ["Revenue to break even","Rp "+fmtRpShort(breakeven||0)]].map(([l,v])=>`
+        <div class="card card-pad" style="flex:1;min-width:150px"><div class="eyebrow">${l}</div>
+          <div class="num" style="font-size:18px;font-weight:800;margin-top:4px">${v}</div></div>`).join("")}
+    </div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:12px">Excludes depreciation, capex and owner money — those appear in cash flow and will land on the balance sheet. Management reporting, not statutory accounts.</p>`;
+}
+function cashFlowHTML(cid,year){
+  const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid);
+  const pids=new Set(projs.map(p=>p.id));
+  const inYear=d=>String(d||"").startsWith(String(year));
+  let custIn=0, supOut=0;
+  DB.quotations.filter(q=>pids.has(q.projectId)&&q.kind==="receipt"&&inYear(q.date)).forEach(r=>custIn+=recCash(r));
+  DB.quotations.filter(q=>pids.has(q.projectId)&&q.kind==="po").forEach(o=>
+    poPayments(o).forEach(p=>{ if(inYear(p.date)) supOut+=Number(p.amount)||0; }));
+  const tx=txInYear(cid,year);
+  const g=(dir,grp)=>tx.filter(t=>t.dir===dir&&txCatGroup(t.category)===grp).reduce((a,t)=>a+t.amount,0);
+  const opexOut=g("out","opex"), otherIn=g("in","income");
+  const capexOut=g("out","capex"), assetIn=tx.filter(t=>t.dir==="in"&&t.category==="assetsale").reduce((a,t)=>a+t.amount,0);
+  const capIn=tx.filter(t=>t.dir==="in"&&["capital","loanin"].includes(t.category)).reduce((a,t)=>a+t.amount,0);
+  const capOut=tx.filter(t=>t.dir==="out"&&["draw","loanout"].includes(t.category)).reduce((a,t)=>a+t.amount,0);
+  const op=custIn+otherIn-supOut-opexOut, inv=assetIn-capexOut, fin=capIn-capOut;
+  const sec=(title,rows,total,color)=>`
+    <tr><td colspan="2" style="padding-top:14px"><span class="eyebrow">${title}</span></td></tr>
+    ${rows.map(([l,v,neg])=>v?`<tr><td style="padding-left:22px">${l}</td>
+      <td class="t-right num" style="color:${neg?"var(--amber)":"var(--accent-dark)"}">${neg?"(":""}${fmtRp(v)}${neg?")":""}</td></tr>`:"").join("")||
+      `<tr><td style="padding-left:22px;color:var(--muted)">None</td><td class="t-right num">—</td></tr>`}
+    <tr style="font-weight:700"><td>${title.split(" ")[0]} net</td>
+      <td class="t-right num" style="color:${total>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(total)}</td></tr>`;
+  const net=op+inv+fin;
+  return `
+    <div class="card card-pad" style="margin-bottom:14px">
+      <span class="eyebrow">Cash flow statement ${year} · direct method</span>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">Every rupiah that moved, grouped by what caused it. Transfers between your own accounts are excluded — they don't change total cash.</div>
+    </div>
+    <div class="card" style="overflow-x:auto"><table class="grid" style="min-width:520px"><tbody>
+      ${sec("Operating activities",[["Received from clients",custIn,false],["Other income",otherIn,false],
+        ["Paid to suppliers &amp; crew",supOut,true],["Operating expenses",opexOut,true]],op)}
+      ${sec("Investing activities",[["Equipment sold",assetIn,false],["Equipment purchased",capexOut,true]],inv)}
+      ${sec("Financing activities",[["Capital &amp; loans received",capIn,false],["Owner draws &amp; repayments",capOut,true]],fin)}
+      <tr style="font-weight:800;border-top:2px solid var(--line)"><td>NET CHANGE IN CASH</td>
+        <td class="t-right num" style="color:${net>=0?"var(--accent-dark)":"var(--red)"}">${fmtRp(net)}</td></tr>
+    </tbody></table></div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:12px">Opening and closing cash balances arrive with the balance sheet, once opening balances are recorded per account.</p>`;
+}
 /* ================= CLIENTS TAB ================= */
 const clientProjects=c=>DB.projects.filter(p=>p.clientId===c.id||(p.client&&p.client.trim().toLowerCase()===c.name.trim().toLowerCase()));
 function renderClientsTab(b){
