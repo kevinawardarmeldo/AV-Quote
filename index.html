@@ -257,7 +257,7 @@ const SHEETS = {
   SignaturePresets:["ID","Name","JSON"],
   Distributors: ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies","Bank Accounts","Types","Role","Day Rate"],
   Companies:    ["ID","Name","Tagline","Address","Contact","Bank Details","Accounts"],
-  Users:        ["ID","Email","Roles","Companies","Locked"],
+  Users:        ["ID","Email","Roles","Companies","Locked","Partner ID"],
   Clients:      ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies"],
   Assets:       ["ID","Asset Code","Brand","Series/Type","Description","Category","Serial Number","Owner","Owner Note","Condition","Location","Purchase Date","Purchase Cost","Daily Rate","Replacement Value","Company ID","Notes","Equipment ID","Files"],
   Bookings:     ["ID","Project ID","Kind","Brand","Series","Partner ID","Qty","From","To","Notes","Status","Units"],
@@ -455,7 +455,7 @@ async function loadAll(){
   DB.distributors=(di||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",contact:r[2]||"",phone:r[3]||"",email:r[4]||"",address:r[5]||"",notes:r[6]||"",companies:(r[7]||"").split(",").filter(Boolean),bankAccounts:(()=>{try{return JSON.parse(r[8]||"[]")}catch(e){return []}})(),
     types:(r[9]||"").split(",").filter(Boolean),role:r[10]||"",dayRate:Number(r[11])||0}));
   DB.companies=(co||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",tagline:r[2]||"",address:r[3]||"",contact:r[4]||"",bank:r[5]||"",accounts:(()=>{try{return JSON.parse(r[6]||"[]")}catch(e){return []}})()}));
-  DB.users=(us||[]).filter(r=>r[0]).map(r=>({id:r[0],email:r[1]||"",roles:(r[2]||"").split(",").filter(Boolean),companies:(r[3]||"").split(",").filter(Boolean),locked:r[4]==="TRUE"}));
+  DB.users=(us||[]).filter(r=>r[0]).map(r=>({id:r[0],email:r[1]||"",roles:(r[2]||"").split(",").filter(Boolean),companies:(r[3]||"").split(",").filter(Boolean),locked:r[4]==="TRUE",partnerId:r[5]||""}));
   DB.clients=(cl||[]).filter(r=>r[0]).map(r=>({id:r[0],name:r[1]||"",contact:r[2]||"",phone:r[3]||"",email:r[4]||"",address:r[5]||"",notes:r[6]||"",companies:(r[7]||"").split(",").filter(Boolean)}));
   DB.assets=(ast||[]).filter(r=>r[0]).map(r=>({id:r[0],code:r[1]||"",brand:r[2]||"",series:r[3]||"",description:r[4]||"",category:r[5]||"",
     serial:r[6]||"",owner:r[7]||"company",ownerNote:r[8]||"",condition:r[9]||"good",location:r[10]||"",
@@ -550,7 +550,7 @@ const saveQuotes   =()=>saveTab("Quotations",DB.quotations.map(q=>[q.id,q.projec
 const saveTemplates=()=>saveTab("NoteTemplates",DB.templates.map(t=>[t.id,t.name,t.content]));
 const saveDistributors=()=>saveTab("Distributors",DB.distributors.map(d=>[d.id,d.name,d.contact,d.phone,d.email,d.address,d.notes,(d.companies||[]).join(","),JSON.stringify(d.bankAccounts||[]),(d.types||[]).join(","),d.role||"",d.dayRate||0]));
 const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.tagline,c.address,c.contact,c.bank,JSON.stringify(c.accounts||[])]));
-const saveUsers=()=>saveTab("Users",DB.users.map(u=>[u.id,u.email,u.roles.join(","),u.companies.join(","),u.locked?"TRUE":"FALSE"]));
+const saveUsers=()=>saveTab("Users",DB.users.map(u=>[u.id,u.email,u.roles.join(","),u.companies.join(","),u.locked?"TRUE":"FALSE",u.partnerId||""]));
 const saveClients=()=>saveTab("Clients",DB.clients.map(c=>[c.id,c.name,c.contact,c.phone,c.email,c.address,c.notes,(c.companies||[]).join(",")]));
 const saveAssets=()=>saveTab("Assets",DB.assets.map(a=>[a.id,a.code,a.brand,a.series,a.description,a.category,a.serial,a.owner,a.ownerNote,a.condition,a.location,a.purchaseDate,a.purchaseCost||0,a.dailyRate||0,a.replacement||0,a.companyId||"",a.notes||"",a.equipmentId||"",JSON.stringify(a.files||[])]));
 const saveEvents=()=>saveTab("Events",DB.events.map(e=>[e.id,e.companyId,e.projectId||"",e.title,e.type,e.date,e.start||"",e.endDate||"",e.end||"",e.notes||"",e.done?"1":"",e.assigned||""]));
@@ -608,10 +608,11 @@ const projCompany=p=>DB.companies.find(c=>c.id===p?.companyId)||DB.companies[0]|
 /* ---------- roles & permissions ---------- */
 let CURRENT_USER=null;
 let ACTIVE_COMPANY=null; // company issuer chosen after login
-const ROLE_LABEL={admin:"Administrator",engineer:"Engineer",adminproject:"Admin Project",finance:"Finance",purchasing:"Purchasing"};
+const ROLE_LABEL={admin:"Administrator",engineer:"Engineer",adminproject:"Admin Project",finance:"Finance",purchasing:"Purchasing",crew:"Crew / Operator"};
 const PERMS={
+  projectlist:["admin","adminproject","engineer","finance","purchasing"],
   equipment:["admin","purchasing"], distributors:["admin","purchasing"],
-  templates:["admin","adminproject"], companies:["admin"], users:["admin"], clients:["admin","adminproject"], dashboard:["admin","finance","purchasing"], assets:["admin","adminproject","purchasing"], book:["admin","adminproject","engineer"], txns:["admin","finance"], calendar:["admin","adminproject","engineer","finance","purchasing"],
+  templates:["admin","adminproject"], companies:["admin"], users:["admin"], clients:["admin","adminproject"], dashboard:["admin","finance","purchasing"], assets:["admin","adminproject","purchasing"], book:["admin","adminproject","engineer"], txns:["admin","finance"], calendar:["admin","adminproject","engineer","finance","purchasing"], myschedule:["admin","adminproject","engineer","crew"],
   quote:["admin","engineer","adminproject"], rap:["admin","adminproject","purchasing"],
   billing:["admin","finance"], po:["admin","purchasing"], sj:["admin","adminproject","purchasing"], ba:["admin","adminproject"], manage:["admin","adminproject"]
 };
@@ -740,7 +741,7 @@ function selectCompany(id){
 
 /* ================= HOME ================= */
 function renderHome(v){
-  const tabPerm={projects:null,equipment:"equipment",distributors:"distributors",templates:"templates",companies:"companies",users:"users",clients:"clients",dashboard:"dashboard",assets:"assets",txns:"txns",calendar:"calendar"};
+  const tabPerm={myschedule:"myschedule",projects:"projectlist",equipment:"equipment",distributors:"distributors",templates:"templates",companies:"companies",users:"users",clients:"clients",dashboard:"dashboard",assets:"assets",txns:"txns",calendar:"calendar"};
   if(tabPerm[route.tab]&&!can(tabPerm[route.tab])) route.tab="projects";
   const tab=route.tab;
   v.innerHTML=`
@@ -767,6 +768,7 @@ function renderHome(v){
       <button class="tab ${tab==="projects"?"active":""}" onclick="route.tab='projects';render()">Projects</button>
       ${can("dashboard")?`<button class="tab ${tab==="dashboard"?"active":""}" onclick="route.tab='dashboard';render()">📊 Dashboard</button>`:""}
       ${can("equipment")?`<button class="tab ${tab==="equipment"?"active":""}" onclick="route.tab='equipment';render()">Equipment</button>`:""}
+      ${myPartnerId()||CURRENT_USER?.roles?.includes("engineer")?`<button class="tab ${tab==="myschedule"?"active":""}" onclick="route.tab='myschedule';render()">👤 My schedule</button>`:""}
       ${can("calendar")?`<button class="tab ${tab==="calendar"?"active":""}" onclick="route.tab='calendar';render()">🗓 Calendar${(()=>{const n=allEvents(ACTIVE_COMPANY).filter(e=>e.overdue).length;return n?` <span class="pill" style="background:var(--red);color:#fff;font-size:10px">${n}</span>`:"";})()}</button>`:""}
       ${can("assets")?`<button class="tab ${tab==="assets"?"active":""}" onclick="route.tab='assets';render()">Assets</button>`:""}
       ${can("txns")?`<button class="tab ${tab==="txns"?"active":""}" onclick="route.tab='txns';render()">💵 Cash book</button>`:""}
@@ -788,6 +790,7 @@ function renderHome(v){
   else if(tab==="assets") renderAssetsTab(b);
   else if(tab==="txns") renderTxnsTab(b);
   else if(tab==="calendar") renderCalendarTab(b);
+  else if(tab==="myschedule") renderMyScheduleTab(b);
   else renderTemplatesTab(b);
 }
 async function reloadData(){ try{ await loadAll(); lastSig=""; render(); toast("Data reloaded from Sheet"); }catch(e){ alert(e.message); } }
@@ -2210,6 +2213,73 @@ function calProjShift(n){
   const [y,m]=calMonthProj.split("-").map(Number);
   calMonthProj=new Date(y,m-1+n,1).toISOString().slice(0,7); render();
 }
+const myPartnerId=()=>CURRENT_USER?.partnerId||"";
+/* what one person is booked on — deliberately free of prices and margins */
+function myScheduleRows(){
+  const pid=myPartnerId(), me=CURRENT_USER;
+  const rows=[];
+  const cids=new Set(me?.roles?.includes("admin")?DB.companies.map(c=>c.id):(me?.companies?.length?me.companies:[ACTIVE_COMPANY]));
+  const okProj=p=>cids.has(p.companyId||DB.companies[0]?.id)&&!["lost","cancelled"].includes(p.status);
+  // crew bookings for the linked partner
+  if(pid) DB.bookings.filter(b=>b.kind==="crew"&&b.partnerId===pid&&bkActive(b)).forEach(b=>{
+    const p=getProject(b.projectId); if(!p||!okProj(p)) return;
+    rows.push({date:b.from,endDate:b.to,type:"crew",title:p.name,project:p,
+      role:DB.distributors.find(d=>d.id===pid)?.role||"",notes:b.notes||""});
+  });
+  // projects the person is assigned to as engineer
+  DB.projects.filter(p=>okProj(p)&&(p.engineers||[]).includes(me?.id)).forEach(p=>{
+    if(p.mobDate)   rows.push({date:p.mobDate,type:"mob",title:"Mobilize — "+p.name,project:p});
+    if(p.eventDate) rows.push({date:p.eventDate,type:"event",title:p.name+" — event day",project:p});
+    if(p.demobDate) rows.push({date:p.demobDate,type:"demob",title:"Demobilize — "+p.name,project:p});
+  });
+  // manual events on those projects, plus events assigned to this person
+  const myProjIds=new Set(rows.map(r=>r.project?.id).filter(Boolean));
+  DB.events.filter(e=>(myProjIds.has(e.projectId)||(e.assigned&&(e.assigned===me?.id||e.assigned===pid)))&&!e.done).forEach(e=>{
+    const p=getProject(e.projectId);
+    if(p&&!okProj(p)) return;
+    rows.push({date:e.date,endDate:e.endDate,start:e.start,end:e.end,type:e.type,title:e.title,project:p,notes:e.notes||""});
+  });
+  return rows.sort((a,b)=>(a.date+(a.start||"")).localeCompare(b.date+(b.start||"")));
+}
+function renderMyScheduleTab(b){
+  const me=CURRENT_USER, pid=myPartnerId();
+  const partner=DB.distributors.find(d=>d.id===pid);
+  const today=todayISO();
+  const all=myScheduleRows();
+  const upcoming=all.filter(r=>(r.endDate||r.date)>=today);
+  const past=all.filter(r=>(r.endDate||r.date)<today).slice(-8).reverse();
+  const daysOut=new Set();
+  upcoming.forEach(r=>{ if(r.type==="crew") dayList(r.date,r.endDate||r.date).forEach(d=>daysOut.add(d)); });
+  const card=r=>{
+    const st=evtStyle(r.type), p=r.project;
+    const multi=r.endDate&&r.endDate!==r.date;
+    return `<div class="card card-pad" style="margin-bottom:8px;border-left:3px solid ${st.fg}"
+      ${p?`onclick="go({view:'project',projectId:'${p.id}',ptab:'cal'})" class="card card-pad rowlink"`:""}>
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline">
+        <strong style="font-size:13.5px">${st.icon} ${esc(r.title)}</strong>
+        <span class="num" style="font-size:12px;color:var(--muted)">${fmtDate(r.date)}${multi?" → "+fmtDate(r.endDate):""}${r.start?" · "+r.start+(r.end?"–"+r.end:""):""}</span>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">
+        ${r.role?esc(r.role)+" · ":""}${p?.location?"📍 "+esc(p.location):p?esc(p.client||""):""}${r.notes?" · "+esc(r.notes):""}
+      </div></div>`;
+  };
+  b.innerHTML=`
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      ${[["You are",partner?esc(partner.name):esc(me?.email||"—")],
+         ["Upcoming items",upcoming.length],
+         ["Days booked ahead",daysOut.size]].map(([l,v])=>`
+        <div class="card card-pad" style="flex:1;min-width:150px"><div class="eyebrow">${l}</div>
+          <div style="font-size:17px;font-weight:800;margin-top:4px">${v}</div></div>`).join("")}
+    </div>
+    ${!pid&&!me?.roles?.includes("engineer")?`<div class="card card-pad" style="margin-bottom:14px;border-left:3px solid var(--amber)">
+      <span class="eyebrow" style="color:var(--amber)">Not linked to a crew record</span>
+      <div style="font-size:12.5px;margin-top:6px">Ask an administrator to link your account to your Partner record — then your bookings appear here.</div></div>`:""}
+    ${upcoming.length?`<span class="eyebrow">Coming up</span><div style="margin-top:8px">${upcoming.map(card).join("")}</div>`
+      :`<div class="card"><div class="empty"><span class="eyebrow">Nothing scheduled</span>When you're booked on a job it shows up here — dates, call times and where to go.</div></div>`}
+    ${past.length?`<div style="margin-top:22px"><span class="eyebrow">Recently finished</span>
+      <div style="margin-top:8px;opacity:.6">${past.map(card).join("")}</div></div>`:""}
+    <p style="font-size:11.5px;color:var(--muted);margin-top:14px">Your jobs, dates and call times. Rates and project finances aren't shown here.</p>`;
+}
 function openEventModal(id,day,forceProject){
   const e=DB.events.find(x=>x.id===id), cid=ACTIVE_COMPANY;
   const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid);
@@ -2230,6 +2300,10 @@ function openEventModal(id,day,forceProject){
       <div class="field"><label>End date (optional — for multi-day)</label><input id="e_endDate" type="date" value="${esc(e?.endDate||"")}"></div>
       <div class="field"><label>End time (optional)</label><input id="e_end" type="time" value="${esc(e?.end||"")}"></div>
     </div>
+    <div class="field"><label>Assign to (optional — shows on their My schedule)</label>
+      <select id="e_assigned"><option value="">— nobody in particular —</option>
+        ${DB.distributors.filter(d=>(d.types||[]).includes("crew")).map(d=>`<option value="${d.id}" ${e?.assigned===d.id?"selected":""}>${esc(d.name)}${d.role?" — "+esc(d.role):""}</option>`).join("")}
+      </select></div>
     <div class="field"><label>Notes</label><textarea id="e_notes" rows="3">${esc(e?.notes||"")}</textarea></div>
     ${e?`<div class="field"><label style="display:flex;align-items:center;gap:8px;font-weight:400">
       <input type="checkbox" id="e_done" ${e.done?"checked":""}> Done</label></div>`:""}
@@ -2243,7 +2317,7 @@ async function saveEventModal(id){
   const rec={companyId:ACTIVE_COMPANY,projectId:$("#e_proj").value,title:$("#e_title").value.trim(),
     type:$("#e_type").value,date:$("#e_date").value,start:$("#e_start").value,
     endDate:$("#e_endDate").value,end:$("#e_end").value,notes:$("#e_notes").value.trim(),
-    done:$("#e_done")?.checked||false,assigned:""};
+    done:$("#e_done")?.checked||false,assigned:$("#e_assigned")?.value||""};
   if(!rec.title) return alert("Give the event a title.");
   if(!rec.date) return alert("Pick a date.");
   if(rec.endDate&&rec.endDate<rec.date) return alert("The end date is before the start date.");
@@ -3530,7 +3604,8 @@ function renderUsersTab(b){
     <thead><tr><th>Email</th><th>Roles</th><th>Company access</th><th></th></tr></thead>
     <tbody>${DB.users.map(u=>`
       <tr><td style="font-weight:600">${esc(u.email)} ${u.locked?'<span class="pill">founder · locked</span>':""}</td>
-      <td>${u.roles.map(r=>`<span class="pill ${r==="admin"?"":"amber"}">${ROLE_LABEL[r]||r}</span>`).join(" ")||'<span style="color:var(--muted)">no role</span>'}</td>
+      <td>${u.roles.map(r=>`<span class="pill ${r==="admin"?"":"amber"}">${ROLE_LABEL[r]||r}</span>`).join(" ")||'<span style="color:var(--muted)">no role</span>'}
+        ${u.partnerId?`<br><span style="font-size:10.5px;color:var(--muted)">↳ ${esc(DB.distributors.find(d=>d.id===u.partnerId)?.name||"unlinked partner")}</span>`:""}</td>
       <td style="font-size:12px;color:var(--muted)">${u.roles.includes("admin")?"All companies":(u.companies.map(id=>esc(DB.companies.find(c=>c.id===id)?.name||"?")).join(", ")||"— none —")}</td>
       <td class="t-right" style="white-space:nowrap">
         <button class="btn ghost small" onclick="openUserModal('${u.id}')">Edit</button>
@@ -3557,6 +3632,11 @@ function openUserModal(id){
     <div class="field"><label>Roles (tick all that apply)</label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${roleBoxes}</div>
       ${u?.locked?'<span style="font-size:11.5px;color:var(--muted)">The founder account is permanently Administrator.</span>':""}</div>
+    <div class="field" id="u_crew_wrap" style="display:none"><label>Linked crew record (their bookings become their schedule)</label>
+      <select id="u_partner"><option value="">— not linked —</option>
+        ${DB.distributors.filter(d=>(d.types||[]).includes("crew")).map(d=>`<option value="${d.id}" ${u?.partnerId===d.id?"selected":""}>${esc(d.name)}${d.role?" — "+esc(d.role):""}</option>`).join("")}
+      </select>
+      <span style="font-size:11.5px;color:var(--muted)">Tag the person as Crew / Operator in Partners first. Without this link the app can't tell which bookings are theirs.</span></div>
     <div class="field" id="u_co_wrap"><label>Can access projects of these companies</label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${coBoxes}</div></div>
     <p id="u_co_note" style="font-size:12px;color:var(--muted);display:none">Administrators automatically access all companies.</p>`,
@@ -3565,9 +3645,12 @@ function openUserModal(id){
   toggleUserCompanyBoxes();
 }
 function toggleUserCompanyBoxes(){
-  const admin=[...document.querySelectorAll(".u_role")].some(c=>c.value==="admin"&&c.checked);
+  const boxes=[...document.querySelectorAll(".u_role")];
+  const admin=boxes.some(c=>c.value==="admin"&&c.checked);
+  const crew=boxes.some(c=>c.value==="crew"&&c.checked);
   $("#u_co_wrap").style.display=admin?"none":"flex";
   $("#u_co_note").style.display=admin?"block":"none";
+  const cw=$("#u_crew_wrap"); if(cw) cw.style.display=crew?"block":"none";
 }
 async function saveUserModal(id){
   const email=$("#u_email").value.trim();
@@ -3581,7 +3664,9 @@ async function saveUserModal(id){
     const u=DB.users.find(x=>x.id===id);
     if(u.locked&&!roles.includes("admin")) roles.push("admin");
     u.email=u.locked?u.email:email; u.roles=roles; u.companies=roles.includes("admin")?[]:companies;
-  } else DB.users.unshift({id:uid(),email,roles,companies:roles.includes("admin")?[]:companies,locked:false});
+    u.partnerId=roles.includes("crew")?($("#u_partner")?.value||""):"";
+  } else DB.users.unshift({id:uid(),email,roles,companies:roles.includes("admin")?[]:companies,locked:false,
+    partnerId:roles.includes("crew")?($("#u_partner")?.value||""):""});
   closeModal(); render(); await persist(saveUsers,"User saved — remind them to get Sheet access + OAuth test-user access");
 }
 async function deleteUser(id){
