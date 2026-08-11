@@ -2045,7 +2045,26 @@ function allEvents(cid,projectId){
 }
 const evtSpans=(e,day)=>e.endDate&&e.endDate>e.date ? (day>=e.date&&day<=e.endDate) : e.date===day;
 
-let calMonth=new Date().toISOString().slice(0,7), calView="month", calTypeFilter="", calProject="";
+let calMonth=new Date().toISOString().slice(0,7), calView="month", calTypeFilter="core", calProject="";
+const CORE_TYPES=["mob","event","demob","money_in","money_out","admin","deadline"];
+/* bookings collapse to one chip per project per day — 30 mic lines is not a calendar */
+function collapseBookings(list){
+  const out=[], bucket={};
+  list.forEach(e=>{
+    if(e.type!=="gear"&&e.type!=="crew") return out.push(e);
+    const key=e.type+"|"+e.projectId+"|"+e.date+"|"+(e.endDate||e.date);
+    if(!bucket[key]){
+      bucket[key]={...e,id:"grp-"+key,count:0,names:[]};
+      out.push(bucket[key]);
+    }
+    bucket[key].count++; bucket[key].names.push(e.title.split(" — ")[0]);
+  });
+  return out.map(e=>{
+    if(!e.count||e.count<2) return e;
+    const proj=getProject(e.projectId)?.name||"";
+    return {...e,title:(e.type==="gear"?e.count+" equipment items":e.count+" crew")+" — "+proj,sub:e.names.join(" · ")};
+  });
+}
 function renderCalendarTab(b){
   const cid=ACTIVE_COMPANY;
   const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid);
@@ -2067,10 +2086,11 @@ function renderCalendarTab(b){
         ${projs.map(p=>`<option value="${p.id}" ${calProject===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}
       </select>
       <select onchange="calTypeFilter=this.value;render()" style="border:1px solid var(--line);border-radius:8px;padding:8px 10px">
-        <option value="">All types</option>
-        <option value="schedule" ${calTypeFilter==="schedule"?"selected":""}>Schedule &amp; bookings</option>
-        <option value="money" ${calTypeFilter==="money"?"selected":""}>Money</option>
-        <option value="manual" ${calTypeFilter==="manual"?"selected":""}>Manual events</option>
+        <option value="core" ${calTypeFilter==="core"?"selected":""}>Milestones &amp; events</option>
+        <option value="schedule" ${calTypeFilter==="schedule"?"selected":""}>Bookings (gear &amp; crew)</option>
+        <option value="money" ${calTypeFilter==="money"?"selected":""}>Money only</option>
+        <option value="manual" ${calTypeFilter==="manual"?"selected":""}>Manual events only</option>
+        <option value="" ${calTypeFilter===""?"selected":""}>Everything</option>
       </select>
     </div>
     <div id="calBody"></div>`;
@@ -2078,10 +2098,11 @@ function renderCalendarTab(b){
 }
 function calEvents(){
   let list=allEvents(ACTIVE_COMPANY,calProject||undefined);
-  if(calTypeFilter==="schedule") list=list.filter(e=>["mob","event","demob","crew","gear"].includes(e.type));
-  else if(calTypeFilter==="money") list=list.filter(e=>["money_in","money_out"].includes(e.type));
-  else if(calTypeFilter==="manual") list=list.filter(e=>!e.derived);
-  return list;
+  if(calTypeFilter==="core")        list=list.filter(e=>!e.derived||CORE_TYPES.includes(e.type));
+  else if(calTypeFilter==="schedule") list=list.filter(e=>["mob","event","demob","crew","gear"].includes(e.type));
+  else if(calTypeFilter==="money")    list=list.filter(e=>["money_in","money_out"].includes(e.type));
+  else if(calTypeFilter==="manual")   list=list.filter(e=>!e.derived);
+  return collapseBookings(list);
 }
 const monthLabel=ym=>{const [y,m]=ym.split("-");return ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"][Number(m)-1]+" "+y;};
 function calShift(n){
@@ -2101,11 +2122,13 @@ function evtChip(e,compact){
       cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${e.overdue?"border-left:3px solid var(--red)":""}${e.done?";opacity:.45;text-decoration:line-through":""}">
     ${st.icon} ${esc(t+e.title)}</div>`;
 }
-function monthHTML(){
+const monthHTML=()=>monthGridHTML(calEvents(),calMonth,null);
+function monthGridHTML(list,ym,projectId){
+  const calMonth=ym;
   const [y,m]=calMonth.split("-").map(Number);
   const first=new Date(y,m-1,1), start=(first.getDay()+6)%7;         // Monday-first
   const days=new Date(y,m,0).getDate();
-  const list=calEvents(), today=todayISO();
+  const today=todayISO();
   const cells=[];
   for(let i=0;i<start;i++) cells.push(null);
   for(let d=1;d<=days;d++) cells.push(calMonth+"-"+String(d).padStart(2,"0"));
@@ -2117,7 +2140,7 @@ function monthHTML(){
         if(!day) return `<div style="background:#FAFBFA;min-height:104px"></div>`;
         const evts=list.filter(e=>evtSpans(e,day));
         const isToday=day===today;
-        return `<div onclick="openEventModal(null,'${day}')" style="background:var(--card,#fff);min-height:104px;padding:5px 6px;cursor:pointer;${isToday?"box-shadow:inset 0 0 0 2px var(--accent-dark)":""}">
+        return `<div onclick="openEventModal(null,'${day}'${projectId?",'"+projectId+"'":""})" style="background:var(--card,#fff);min-height:104px;padding:5px 6px;cursor:pointer;${isToday?"box-shadow:inset 0 0 0 2px var(--accent-dark)":""}">
           <div style="font-size:11.5px;font-weight:${isToday?"800":"600"};color:${isToday?"var(--accent-dark)":"var(--muted)"};margin-bottom:3px">${Number(day.slice(8))}</div>
           ${evts.slice(0,4).map(e=>evtChip(e,true)).join("")}
           ${evts.length>4?`<div style="font-size:10px;color:var(--muted)">+${evts.length-4} more</div>`:""}
@@ -2146,7 +2169,48 @@ function agendaHTML(){
     :`<div class="card"><div class="empty"><span class="eyebrow">Nothing scheduled</span>Add an event, or set mobilize/demobilize dates on a project — bookings and invoice due dates appear here automatically.</div></div>`}
     <p style="font-size:11.5px;color:var(--muted)">Showing the next 60 days.</p>`;
 }
-function openEventModal(id,day){
+let calMonthProj=new Date().toISOString().slice(0,7), calProjView="month";
+function renderProjectCalendar(b,p){
+  const cid=p.companyId||DB.companies[0]?.id;
+  // open on the project's own month the first time it is viewed
+  if(!renderProjectCalendar._seen||renderProjectCalendar._seen!==p.id){
+    renderProjectCalendar._seen=p.id;
+    calMonthProj=(p.eventDate||p.mobDate||todayISO()).slice(0,7);
+  }
+  const list=collapseBookings(allEvents(cid,p.id));
+  const upcoming=list.filter(e=>(e.endDate||e.date)>=todayISO());
+  b.innerHTML=`
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <div style="display:flex;gap:6px">
+        ${[["month","Month"],["agenda","📋 List"]].map(([k,l])=>`
+          <button class="btn small" style="border-radius:99px;${calProjView===k?"background:var(--ink);color:#fff;border-color:var(--ink)":""}"
+            onclick="calProjView='${k}';render()">${l}</button>`).join("")}
+      </div>
+      ${calProjView==="month"?`<div style="display:flex;gap:6px;align-items:center">
+        <button class="btn small" onclick="calProjShift(-1)">‹</button>
+        <strong style="min-width:150px;text-align:center">${monthLabel(calMonthProj)}</strong>
+        <button class="btn small" onclick="calProjShift(1)">›</button>
+        <button class="btn ghost small" onclick="calMonthProj='${(p.eventDate||p.mobDate||todayISO()).slice(0,7)}';render()">event month</button>
+      </div>`:""}
+      <div style="flex:1"></div>
+      <button class="btn primary small" onclick="openEventModal(null,'${p.mobDate||p.eventDate||todayISO()}','${p.id}')">+ Add event</button>
+    </div>
+    ${(p.mobDate||p.eventDate||p.demobDate)?`<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">
+      Schedule: ${p.mobDate?"mob <strong>"+fmtDate(p.mobDate)+"</strong>":""}${p.eventDate?" · event <strong>"+fmtDate(p.eventDate)+"</strong>":""}${p.demobDate?" · demob <strong>"+fmtDate(p.demobDate)+"</strong>":""}
+      <button class="btn ghost small" onclick="openProjectModal('${p.id}')">edit</button></div>`:""}
+    ${calProjView==="month"?monthGridHTML(list,calMonthProj,p.id)
+      :(upcoming.length?upcoming.map(e=>`
+        <div class="card card-pad" style="margin-bottom:8px;display:flex;gap:12px;align-items:center">
+          <span class="num" style="font-size:12px;color:var(--muted);min-width:130px">${fmtDate(e.date)}${e.start?" · "+e.start:""}${e.endDate&&e.endDate!==e.date?" → "+fmtDate(e.endDate):""}</span>
+          <div style="flex:1">${evtChip(e)}${e.sub?`<div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(e.sub)}</div>`:""}</div>
+        </div>`).join("")
+      :`<div class="card"><div class="empty">Nothing upcoming for this project.</div></div>`)}`;
+}
+function calProjShift(n){
+  const [y,m]=calMonthProj.split("-").map(Number);
+  calMonthProj=new Date(y,m-1+n,1).toISOString().slice(0,7); render();
+}
+function openEventModal(id,day,forceProject){
   const e=DB.events.find(x=>x.id===id), cid=ACTIVE_COMPANY;
   const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid);
   openModal(e?"Edit event":"Add event",`
@@ -2156,7 +2220,7 @@ function openEventModal(id,day){
         <select id="e_type">${MANUAL_TYPES.map(k=>`<option value="${k}" ${(e?.type||"meeting")===k?"selected":""}>${EVTYPE[k].icon} ${EVTYPE[k].label}</option>`).join("")}</select></div>
       <div class="field"><label>Project (optional)</label>
         <select id="e_proj"><option value="">— not tied to a project —</option>
-          ${projs.map(p=>`<option value="${p.id}" ${e?.projectId===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
+          ${projs.map(p=>`<option value="${p.id}" ${(e?.projectId||forceProject)===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
     </div>
     <div class="field-row c2">
       <div class="field"><label>Date</label><input id="e_date" type="date" value="${esc(e?.date||day||todayISO())}"></div>
@@ -2569,19 +2633,6 @@ function renderProjectBooking(b,p){
         <tbody>${aLines.map(assetRow).join("")}</tbody></table></div>`
       :`<div class="empty" style="padding:18px">No equipment booked yet.${models.length?"":" Register assets first — the fleet is empty."}</div>`}
     </div>
-    ${(()=>{const evts=allEvents(cid,p.id).filter(e=>(e.endDate||e.date)>=todayISO()).slice(0,8);
-      return `<div class="card" style="margin-bottom:16px">
-        <div class="card-pad" style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px">
-          <span class="eyebrow">Schedule — upcoming for this project</span>
-          <button class="btn small" onclick="openEventModal(null,'${p.mobDate||p.eventDate||todayISO()}')">+ Add event</button></div>
-        <div class="card-pad" style="padding-top:0">
-          ${evts.length?`<div style="display:flex;flex-direction:column;gap:3px">${evts.map(e=>`
-            <div style="display:flex;gap:8px;align-items:center">
-              <span class="num" style="font-size:11.5px;color:var(--muted);min-width:110px">${fmtDate(e.date)}${e.start?" "+e.start:""}</span>
-              <div style="flex:1">${evtChip(e)}</div></div>`).join("")}</div>`
-          :`<div style="font-size:12.5px;color:var(--muted)">Nothing upcoming — set the project schedule or add an event.</div>`}
-        </div></div>`;})()}
-
     <div class="card">
       <div class="card-pad" style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px">
         <span class="eyebrow">Crew bookings — named people, shown on quotes only as a line item</span>
@@ -3582,7 +3633,7 @@ function renderProject(v,p){
   const co=projCompany(p);
   const tabsAllowed={docs:can("quote")||can("rap"),billing:can("billing"),
     po:can("po")&&moduleOn(p,"po"),sj:can("sj")&&moduleOn(p,"sj"),ba:can("ba")&&moduleOn(p,"ba"),
-    book:can("book")&&moduleOn(p,"book")};
+    book:can("book")&&moduleOn(p,"book"),cal:can("calendar")};
   if(!tabsAllowed[route.ptab]) route.ptab=tabsAllowed.docs?"docs":tabsAllowed.billing?"billing":tabsAllowed.book?"book":tabsAllowed.po?"po":tabsAllowed.sj?"sj":"ba";
   const ptab=route.ptab;
   v.innerHTML=`
@@ -3606,6 +3657,7 @@ function renderProject(v,p){
     <div class="tabs">
       ${tabsAllowed.docs?`<button class="tab ${ptab==="docs"?"active":""}" onclick="route.ptab='docs';render()">${can("quote")&&can("rap")?"Quotations & Costs":can("quote")?"Quotations":"Costs"}</button>`:""}
       ${tabsAllowed.book?`<button class="tab ${ptab==="book"?"active":""}" onclick="route.ptab='book';render()">Booking & Crew</button>`:""}
+      ${tabsAllowed.cal?`<button class="tab ${ptab==="cal"?"active":""}" onclick="route.ptab='cal';render()">🗓 Calendar</button>`:""}
       ${tabsAllowed.billing?`<button class="tab ${ptab==="billing"?"active":""}" onclick="route.ptab='billing';render()">SO · Invoices · Receipts</button>`:""}
       ${tabsAllowed.po?`<button class="tab ${ptab==="po"?"active":""}" onclick="route.ptab='po';render()">Purchase Orders</button>`:""}
       ${tabsAllowed.sj?`<button class="tab ${ptab==="sj"?"active":""}" onclick="route.ptab='sj';render()">Surat Jalan</button>`:""}
@@ -3618,6 +3670,7 @@ function renderProject(v,p){
   else if(ptab==="sj") renderProjectSJ(b,p);
   else if(ptab==="ba") renderProjectBA(b,p);
   else if(ptab==="book") renderProjectBooking(b,p);
+  else if(ptab==="cal") renderProjectCalendar(b,p);
   else renderProjectPO(b,p);
 }
 function docRowActions(q,kind){
