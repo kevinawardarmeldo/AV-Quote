@@ -261,12 +261,13 @@ const SHEETS = {
   Clients:      ["ID","Name","Contact Person","Phone","Email","Address","Notes","Companies"],
   Assets:       ["ID","Asset Code","Brand","Series/Type","Description","Category","Serial Number","Owner","Owner Note","Condition","Location","Purchase Date","Purchase Cost","Daily Rate","Replacement Value","Company ID","Notes","Equipment ID","Files"],
   Bookings:     ["ID","Project ID","Kind","Brand","Series","Partner ID","Qty","From","To","Notes","Status","Units"],
-  Transactions: ["ID","Company ID","Date","Direction","Category","Description","Amount","Account","To Account","Payee","Project ID","Reference","Notes","Recurring","Files"]
+  Transactions: ["ID","Company ID","Date","Direction","Category","Description","Amount","Account","To Account","Payee","Project ID","Reference","Notes","Recurring","Files"],
+  Events:       ["ID","Company ID","Project ID","Title","Type","Date","Start Time","End Date","End Time","Notes","Done","Assigned"]
 };
 
 /* ================= state ================= */
 let token=null, tokenExp=0, userEmail="", userPic="";
-let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[],distributors:[],companies:[],users:[],clients:[],assets:[],bookings:[],txns:[]};
+let DB={equipment:[],projects:[],quotations:[],templates:[],sigPresets:[],distributors:[],companies:[],users:[],clients:[],assets:[],bookings:[],txns:[],events:[]};
 let route={view:"home",tab:"projects",ptab:"docs",projectId:null,quoteId:null,companyFilter:""};
 let dirty=false;
 
@@ -430,7 +431,7 @@ async function loadAll(){
       return {name:tabNames[i],rows:rows.length,bytes:new Blob([JSON.stringify(rows)]).size,maxCell,
               maxLabel:maxRow?String(maxRow[2]||maxRow[3]||maxRow[1]||maxRow[0]||""):""};
     })};
-  const [eq,pr,qu,nt,sp,di,co,us,cl,ast,bk,tx]=res.valueRanges.map(v=>v.values||[]);
+  const [eq,pr,qu,nt,sp,di,co,us,cl,ast,bk,tx,ev]=res.valueRanges.map(v=>v.values||[]);
   DB.equipment=eq.filter(r=>r[0]).map(r=>({id:r[0],brand:r[1]||"",series:r[2]||"",description:r[3]||"",category:r[4]||"",unit:r[5]||"",price:Number(r[6])||0,cost:Number(r[7])||0,priceUpdated:r[8]||"",distributor:r[9]||"",
     companies:(r[10]||"").split(",").filter(Boolean),costs:(()=>{try{return JSON.parse(r[11]||"{}")}catch(e){return {}}})(),
     prices:(()=>{try{return JSON.parse(r[12]||"{}")}catch(e){return {}}})()}));
@@ -468,6 +469,8 @@ async function loadAll(){
     description:r[5]||"",amount:Number(r[6])||0,account:r[7]||"",toAccount:r[8]||"",payee:r[9]||"",
     projectId:r[10]||"",reference:r[11]||"",notes:r[12]||"",recurring:String(r[13]||"")==="1",
     files:(()=>{try{return r[14]?JSON.parse(r[14]):[]}catch(e){return []}})()}));
+  DB.events=(ev||[]).filter(r=>r[0]).map(r=>({id:r[0],companyId:r[1]||"",projectId:r[2]||"",title:r[3]||"",type:r[4]||"other",
+    date:r[5]||"",start:r[6]||"",endDate:r[7]||"",end:r[8]||"",notes:r[9]||"",done:String(r[10]||"")==="1",assigned:r[11]||""}));
 }
 /* ---------------------------------------------------------------
    Concurrency-safe saving.
@@ -550,6 +553,7 @@ const saveCompanies=()=>saveTab("Companies",DB.companies.map(c=>[c.id,c.name,c.t
 const saveUsers=()=>saveTab("Users",DB.users.map(u=>[u.id,u.email,u.roles.join(","),u.companies.join(","),u.locked?"TRUE":"FALSE"]));
 const saveClients=()=>saveTab("Clients",DB.clients.map(c=>[c.id,c.name,c.contact,c.phone,c.email,c.address,c.notes,(c.companies||[]).join(",")]));
 const saveAssets=()=>saveTab("Assets",DB.assets.map(a=>[a.id,a.code,a.brand,a.series,a.description,a.category,a.serial,a.owner,a.ownerNote,a.condition,a.location,a.purchaseDate,a.purchaseCost||0,a.dailyRate||0,a.replacement||0,a.companyId||"",a.notes||"",a.equipmentId||"",JSON.stringify(a.files||[])]));
+const saveEvents=()=>saveTab("Events",DB.events.map(e=>[e.id,e.companyId,e.projectId||"",e.title,e.type,e.date,e.start||"",e.endDate||"",e.end||"",e.notes||"",e.done?"1":"",e.assigned||""]));
 const saveTxns=()=>saveTab("Transactions",DB.txns.map(t=>[t.id,t.companyId,t.date,t.dir,t.category,t.description,t.amount||0,t.account||"",t.toAccount||"",t.payee||"",t.projectId||"",t.reference||"",t.notes||"",t.recurring?"1":"",JSON.stringify(t.files||[])]));
 const saveBookings=()=>saveTab("Bookings",DB.bookings.map(b=>[b.id,b.projectId,b.kind,b.brand,b.series,b.partnerId,b.qty||1,b.from,b.to,b.notes||"",b.status||"reserved",JSON.stringify(b.units||[])]));
 async function persist(fn,msg){
@@ -607,7 +611,7 @@ let ACTIVE_COMPANY=null; // company issuer chosen after login
 const ROLE_LABEL={admin:"Administrator",engineer:"Engineer",adminproject:"Admin Project",finance:"Finance",purchasing:"Purchasing"};
 const PERMS={
   equipment:["admin","purchasing"], distributors:["admin","purchasing"],
-  templates:["admin","adminproject"], companies:["admin"], users:["admin"], clients:["admin","adminproject"], dashboard:["admin","finance","purchasing"], assets:["admin","adminproject","purchasing"], book:["admin","adminproject","engineer"], txns:["admin","finance"],
+  templates:["admin","adminproject"], companies:["admin"], users:["admin"], clients:["admin","adminproject"], dashboard:["admin","finance","purchasing"], assets:["admin","adminproject","purchasing"], book:["admin","adminproject","engineer"], txns:["admin","finance"], calendar:["admin","adminproject","engineer","finance","purchasing"],
   quote:["admin","engineer","adminproject"], rap:["admin","adminproject","purchasing"],
   billing:["admin","finance"], po:["admin","purchasing"], sj:["admin","adminproject","purchasing"], ba:["admin","adminproject"], manage:["admin","adminproject"]
 };
@@ -736,7 +740,7 @@ function selectCompany(id){
 
 /* ================= HOME ================= */
 function renderHome(v){
-  const tabPerm={projects:null,equipment:"equipment",distributors:"distributors",templates:"templates",companies:"companies",users:"users",clients:"clients",dashboard:"dashboard",assets:"assets",txns:"txns"};
+  const tabPerm={projects:null,equipment:"equipment",distributors:"distributors",templates:"templates",companies:"companies",users:"users",clients:"clients",dashboard:"dashboard",assets:"assets",txns:"txns",calendar:"calendar"};
   if(tabPerm[route.tab]&&!can(tabPerm[route.tab])) route.tab="projects";
   const tab=route.tab;
   v.innerHTML=`
@@ -755,6 +759,7 @@ function renderHome(v){
          :tab==="clients"?`<button class="btn primary" onclick="openClientModal()">+ Add client</button>`
          :tab==="assets"?`<button class="btn primary" onclick="openAssetModal()">+ Add asset</button>`
          :tab==="txns"?`<button class="btn primary" onclick="openTxnModal()">+ Add transaction</button>`
+         :tab==="calendar"?`<button class="btn primary" onclick="openEventModal(null,'')">+ Add event</button>`
          :`<button class="btn primary" onclick="openTemplateModal()">+ New template</button>`}
       </div>
     </div>
@@ -762,6 +767,7 @@ function renderHome(v){
       <button class="tab ${tab==="projects"?"active":""}" onclick="route.tab='projects';render()">Projects</button>
       ${can("dashboard")?`<button class="tab ${tab==="dashboard"?"active":""}" onclick="route.tab='dashboard';render()">📊 Dashboard</button>`:""}
       ${can("equipment")?`<button class="tab ${tab==="equipment"?"active":""}" onclick="route.tab='equipment';render()">Equipment</button>`:""}
+      ${can("calendar")?`<button class="tab ${tab==="calendar"?"active":""}" onclick="route.tab='calendar';render()">🗓 Calendar${(()=>{const n=allEvents(ACTIVE_COMPANY).filter(e=>e.overdue).length;return n?` <span class="pill" style="background:var(--red);color:#fff;font-size:10px">${n}</span>`:"";})()}</button>`:""}
       ${can("assets")?`<button class="tab ${tab==="assets"?"active":""}" onclick="route.tab='assets';render()">Assets</button>`:""}
       ${can("txns")?`<button class="tab ${tab==="txns"?"active":""}" onclick="route.tab='txns';render()">💵 Cash book</button>`:""}
       ${can("clients")?`<button class="tab ${tab==="clients"?"active":""}" onclick="route.tab='clients';render()">Clients</button>`:""}
@@ -781,6 +787,7 @@ function renderHome(v){
   else if(tab==="dashboard") renderDashboardTab(b);
   else if(tab==="assets") renderAssetsTab(b);
   else if(tab==="txns") renderTxnsTab(b);
+  else if(tab==="calendar") renderCalendarTab(b);
   else renderTemplatesTab(b);
 }
 async function reloadData(){ try{ await loadAll(); lastSig=""; render(); toast("Data reloaded from Sheet"); }catch(e){ alert(e.message); } }
@@ -1945,6 +1952,256 @@ const bkDispatchState=b=>{const n=bkUnits(b).length, back=bkReturned(b);
 const DSTATE={pending:{label:"not dispatched",bg:"#EDF1EC",fg:"#5C665F"},out:{label:"out",bg:"#E2E9F3",fg:"#2C4A6E"},
   partial:{label:"partly back",bg:"#F7EDDA",fg:"#B4720E"},returned:{label:"returned",bg:"var(--accent-soft)",fg:"var(--accent-dark)"}};
 const dstatePill=b=>{const x=DSTATE[bkDispatchState(b)];return `<span class="pill" style="background:${x.bg};color:${x.fg}">${x.label}</span>`;};
+/* ================= CALENDAR =================
+   Two sources: manual events (DB.events) and derived items computed from the
+   schedule, bookings, invoices, POs and recurring entries. Derived items are
+   never stored — they clear themselves when the underlying record changes. */
+const EVTYPE={
+  mob:      {label:"Mobilize",     bg:"#E2E9F3",fg:"#2C4A6E",icon:"🚚"},
+  event:    {label:"Event day",    bg:"var(--accent-soft)",fg:"var(--accent-dark)",icon:"🎤"},
+  demob:    {label:"Demobilize",   bg:"#E2E9F3",fg:"#2C4A6E",icon:"📦"},
+  crew:     {label:"Crew",         bg:"#EDF1EC",fg:"#5C665F",icon:"👷"},
+  gear:     {label:"Equipment out",bg:"#EDF1EC",fg:"#5C665F",icon:"🔊"},
+  money_in: {label:"Money due in", bg:"#F7EDDA",fg:"#B4720E",icon:"💰"},
+  money_out:{label:"Money due out",bg:"#F7E4E1",fg:"#B3382C",icon:"💸"},
+  admin:    {label:"Admin",        bg:"#F7EDDA",fg:"#B4720E",icon:"🔁"},
+  meeting:  {label:"Meeting",      bg:"#E2E9F3",fg:"#2C4A6E",icon:"🤝"},
+  survey:   {label:"Site survey",  bg:"#E2E9F3",fg:"#2C4A6E",icon:"📐"},
+  deadline: {label:"Deadline",     bg:"#F7E4E1",fg:"#B3382C",icon:"⏰"},
+  service:  {label:"Service",      bg:"#F7EDDA",fg:"#B4720E",icon:"🔧"},
+  other:    {label:"Other",        bg:"#EDF1EC",fg:"#5C665F",icon:"•"}
+};
+const MANUAL_TYPES=["meeting","survey","deadline","service","admin","other"];
+const evtStyle=t=>EVTYPE[t]||EVTYPE.other;
+const addDays=(d,n)=>{const x=new Date(d+"T00:00:00");x.setDate(x.getDate()+n);return x.toISOString().slice(0,10);};
+/* follow-up date + note live on the source document, so nothing goes stale */
+const followUp=q=>q?.extra?.followUp||"";
+async function setFollowUp(qid,date,note){
+  const q=getQuote(qid); q.extra=q.extra||{};
+  q.extra.followUp=date||""; if(note!==undefined) q.extra.followUpNote=note;
+  render(); await persist(saveQuotes,date?"Follow-up set for "+fmtDate(date):"Follow-up cleared");
+}
+function derivedEvents(cid){
+  const out=[], today=todayISO();
+  const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid&&!["lost","cancelled"].includes(p.status));
+  const pids=new Set(projs.map(p=>p.id));
+  const push=(o)=>{ if(o.date) out.push({derived:true,...o}); };
+  projs.forEach(p=>{
+    if(p.mobDate)   push({id:"mob-"+p.id,  type:"mob",  date:p.mobDate,  title:"Mobilize — "+p.name,  projectId:p.id,link:{view:"project",projectId:p.id,ptab:"book"}});
+    if(p.eventDate) push({id:"evt-"+p.id,  type:"event",date:p.eventDate,title:p.name+" — event day",  projectId:p.id,link:{view:"project",projectId:p.id}});
+    if(p.demobDate) push({id:"demob-"+p.id,type:"demob",date:p.demobDate,title:"Demobilize — "+p.name,projectId:p.id,link:{view:"project",projectId:p.id,ptab:"book"}});
+  });
+  // crew + equipment bookings
+  DB.bookings.filter(b=>pids.has(b.projectId)&&bkActive(b)).forEach(b=>{
+    const p=getProject(b.projectId);
+    if(b.kind==="crew"){
+      const d=DB.distributors.find(x=>x.id===b.partnerId);
+      push({id:"crew-"+b.id,type:"crew",date:b.from,endDate:b.to,projectId:b.projectId,
+        title:(d?.name||"Crew")+" — "+p.name,sub:d?.role||"",link:{view:"project",projectId:b.projectId,ptab:"book"}});
+    }else{
+      push({id:"gear-"+b.id,type:"gear",date:b.from,endDate:b.to,projectId:b.projectId,
+        title:(b.qty||1)+"× "+b.brand+" "+b.series+" — "+p.name,
+        sub:bkUnits(b).length?bkUnits(b).map(u=>assetById(u.assetId)?.code).filter(Boolean).join(" · "):"not dispatched",
+        link:{view:"project",projectId:b.projectId,ptab:"book"}});
+    }
+  });
+  // money in: unpaid invoices, on follow-up date if set, else due date
+  arRows(cid).forEach(r=>{
+    const fu=followUp(r.q);
+    push({id:"ar-"+r.q.id,type:"money_in",date:fu||r.ref,projectId:r.p.id,
+      title:"Collect "+fmtRp(r.out)+" — "+(r.p.client||r.p.name),
+      sub:(r.q.quoteNumber||"invoice")+(fu?" · follow-up"+(r.q.extra?.followUpNote?": "+r.q.extra.followUpNote:""):(r.days>0?" · "+r.days+" days overdue":""))+(r.hasDue?"":" · no due date"),
+      overdue:r.days>0,qid:r.q.id,link:{view:"quote",quoteId:r.q.id}});
+  });
+  // money out: PO balances, dated by their last planned payment or the PO date
+  apRows(cid).forEach(r=>{
+    const pays=poPayments(r.o), last=pays.map(x=>x.date).filter(Boolean).sort().slice(-1)[0];
+    push({id:"ap-"+r.o.id,type:"money_out",date:followUp(r.o)||last||r.o.date,projectId:r.o.projectId,
+      title:"Pay "+fmtRp(r.out)+" — "+r.vendor,sub:(r.o.quoteNumber||"PO")+(r.days>60?" · "+r.days+" days old":""),
+      qid:r.o.id,link:{view:"quote",quoteId:r.o.id}});
+  });
+  // recurring entries not yet posted this month
+  const ym=today.slice(0,7);
+  DB.txns.filter(t=>(t.companyId||DB.companies[0]?.id)===cid&&t.recurring).forEach(t=>{
+    const posted=DB.txns.some(x=>!x.recurring&&x.category===t.category&&x.description===t.description&&String(x.date).startsWith(ym));
+    if(!posted) push({id:"rec-"+t.id,type:"admin",date:ym+"-"+String(t.date||"01").slice(8,10),
+      title:"Post "+(t.description||txCatLabel(t.category))+" — "+fmtRp(t.amount),sub:"recurring entry",
+      link:{tab:"txns"}});
+  });
+  // gear still out past demob
+  DB.bookings.filter(b=>pids.has(b.projectId)&&bkActive(b)&&b.to<today&&bkUnits(b).some(u=>!u.back)).forEach(b=>{
+    push({id:"late-"+b.id,type:"deadline",date:b.to,projectId:b.projectId,
+      title:"Gear not returned — "+b.brand+" "+b.series,sub:getProject(b.projectId)?.name||"",overdue:true,
+      link:{view:"project",projectId:b.projectId,ptab:"book"}});
+  });
+  return out;
+}
+function allEvents(cid,projectId){
+  const manual=DB.events.filter(e=>(e.companyId||DB.companies[0]?.id)===cid)
+    .map(e=>({...e,derived:false,link:e.projectId?{view:"project",projectId:e.projectId}:null}));
+  const list=[...manual,...derivedEvents(cid)];
+  return (projectId?list.filter(e=>e.projectId===projectId):list)
+    .sort((a,b)=>(a.date+(a.start||"")).localeCompare(b.date+(b.start||"")));
+}
+const evtSpans=(e,day)=>e.endDate&&e.endDate>e.date ? (day>=e.date&&day<=e.endDate) : e.date===day;
+
+let calMonth=new Date().toISOString().slice(0,7), calView="month", calTypeFilter="", calProject="";
+function renderCalendarTab(b){
+  const cid=ACTIVE_COMPANY;
+  const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid);
+  b.innerHTML=`
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <div style="display:flex;gap:6px">
+        ${[["month","Month"],["agenda","📋 Agenda"]].map(([k,l])=>`
+          <button class="btn small" style="border-radius:99px;${calView===k?"background:var(--ink);color:#fff;border-color:var(--ink)":""}"
+            onclick="calView='${k}';render()">${l}</button>`).join("")}
+      </div>
+      ${calView==="month"?`<div style="display:flex;gap:6px;align-items:center">
+        <button class="btn small" onclick="calShift(-1)">‹</button>
+        <strong style="min-width:150px;text-align:center">${monthLabel(calMonth)}</strong>
+        <button class="btn small" onclick="calShift(1)">›</button>
+        <button class="btn ghost small" onclick="calMonth='${new Date().toISOString().slice(0,7)}';render()">today</button>
+      </div>`:""}
+      <select onchange="calProject=this.value;render()" style="border:1px solid var(--line);border-radius:8px;padding:8px 10px">
+        <option value="">All projects</option>
+        ${projs.map(p=>`<option value="${p.id}" ${calProject===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}
+      </select>
+      <select onchange="calTypeFilter=this.value;render()" style="border:1px solid var(--line);border-radius:8px;padding:8px 10px">
+        <option value="">All types</option>
+        <option value="schedule" ${calTypeFilter==="schedule"?"selected":""}>Schedule &amp; bookings</option>
+        <option value="money" ${calTypeFilter==="money"?"selected":""}>Money</option>
+        <option value="manual" ${calTypeFilter==="manual"?"selected":""}>Manual events</option>
+      </select>
+    </div>
+    <div id="calBody"></div>`;
+  renderCalBody();
+}
+function calEvents(){
+  let list=allEvents(ACTIVE_COMPANY,calProject||undefined);
+  if(calTypeFilter==="schedule") list=list.filter(e=>["mob","event","demob","crew","gear"].includes(e.type));
+  else if(calTypeFilter==="money") list=list.filter(e=>["money_in","money_out"].includes(e.type));
+  else if(calTypeFilter==="manual") list=list.filter(e=>!e.derived);
+  return list;
+}
+const monthLabel=ym=>{const [y,m]=ym.split("-");return ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"][Number(m)-1]+" "+y;};
+function calShift(n){
+  const [y,m]=calMonth.split("-").map(Number);
+  const d=new Date(y,m-1+n,1); calMonth=d.toISOString().slice(0,7); render();
+}
+function renderCalBody(){
+  const el=$("#calBody"); if(!el) return;
+  el.innerHTML=calView==="agenda"?agendaHTML():monthHTML();
+}
+function evtChip(e,compact){
+  const st=evtStyle(e.type);
+  const t=e.start?e.start+" ":"";
+  return `<div onclick="event.stopPropagation();${e.derived?(e.link?`go(${JSON.stringify(e.link).replace(/"/g,"&quot;")})`:""):`openEventModal('${e.id}')`}"
+    title="${esc((e.start?e.start+" — ":"")+e.title+(e.sub?" · "+e.sub:""))}"
+    style="background:${st.bg};color:${st.fg};border-radius:5px;padding:2px 5px;margin-bottom:2px;font-size:${compact?"10.5px":"12px"};
+      cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${e.overdue?"border-left:3px solid var(--red)":""}${e.done?";opacity:.45;text-decoration:line-through":""}">
+    ${st.icon} ${esc(t+e.title)}</div>`;
+}
+function monthHTML(){
+  const [y,m]=calMonth.split("-").map(Number);
+  const first=new Date(y,m-1,1), start=(first.getDay()+6)%7;         // Monday-first
+  const days=new Date(y,m,0).getDate();
+  const list=calEvents(), today=todayISO();
+  const cells=[];
+  for(let i=0;i<start;i++) cells.push(null);
+  for(let d=1;d<=days;d++) cells.push(calMonth+"-"+String(d).padStart(2,"0"));
+  while(cells.length%7) cells.push(null);
+  return `<div class="card" style="overflow-x:auto"><div style="min-width:720px">
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);background:var(--line);gap:1px">
+      ${["Sen","Sel","Rab","Kam","Jum","Sab","Min"].map(d=>`<div style="background:var(--card,#fff);padding:8px;text-align:center;font-size:11px;letter-spacing:.06em;color:var(--muted)">${d}</div>`).join("")}
+      ${cells.map(day=>{
+        if(!day) return `<div style="background:#FAFBFA;min-height:104px"></div>`;
+        const evts=list.filter(e=>evtSpans(e,day));
+        const isToday=day===today;
+        return `<div onclick="openEventModal(null,'${day}')" style="background:var(--card,#fff);min-height:104px;padding:5px 6px;cursor:pointer;${isToday?"box-shadow:inset 0 0 0 2px var(--accent-dark)":""}">
+          <div style="font-size:11.5px;font-weight:${isToday?"800":"600"};color:${isToday?"var(--accent-dark)":"var(--muted)"};margin-bottom:3px">${Number(day.slice(8))}</div>
+          ${evts.slice(0,4).map(e=>evtChip(e,true)).join("")}
+          ${evts.length>4?`<div style="font-size:10px;color:var(--muted)">+${evts.length-4} more</div>`:""}
+        </div>`;}).join("")}
+    </div></div>
+    <div style="padding:10px 14px;font-size:11.5px;color:var(--muted)">Click a day to add an event · click an item to open it. Bookings, invoice due dates and PO balances appear automatically and clear themselves when settled.</div></div>`;
+}
+function agendaHTML(){
+  const list=calEvents(), today=todayISO();
+  const overdue=list.filter(e=>e.overdue&&e.date<today);
+  const upcoming=list.filter(e=>!(e.overdue&&e.date<today)&&(e.endDate||e.date)>=today&&e.date<=addDays(today,60));
+  const byDay={};
+  upcoming.forEach(e=>{ (byDay[e.date]=byDay[e.date]||[]).push(e); });
+  const days=Object.keys(byDay).sort();
+  return `
+    ${overdue.length?`<div class="card card-pad" style="margin-bottom:14px;border-left:3px solid var(--red)">
+      <span class="eyebrow" style="color:var(--red)">Needs attention — ${overdue.length}</span>
+      <div style="margin-top:8px;display:flex;flex-direction:column;gap:3px">${overdue.map(e=>evtChip(e)).join("")}</div></div>`:""}
+    ${days.length?days.map(d=>`
+      <div class="card card-pad" style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <strong style="font-size:13px">${fmtDate(d)}${d===today?' <span class="pill">today</span>':""}</strong>
+          <span style="font-size:11px;color:var(--muted)">${byDay[d].length} item(s)</span></div>
+        <div style="margin-top:8px;display:flex;flex-direction:column;gap:3px">${byDay[d].map(e=>evtChip(e)).join("")}</div>
+      </div>`).join("")
+    :`<div class="card"><div class="empty"><span class="eyebrow">Nothing scheduled</span>Add an event, or set mobilize/demobilize dates on a project — bookings and invoice due dates appear here automatically.</div></div>`}
+    <p style="font-size:11.5px;color:var(--muted)">Showing the next 60 days.</p>`;
+}
+function openEventModal(id,day){
+  const e=DB.events.find(x=>x.id===id), cid=ACTIVE_COMPANY;
+  const projs=DB.projects.filter(p=>(p.companyId||DB.companies[0]?.id)===cid);
+  openModal(e?"Edit event":"Add event",`
+    <div class="field"><label>Title</label><input id="e_title" value="${esc(e?.title||"")}" placeholder="e.g. Site survey with Brian"></div>
+    <div class="field-row c2">
+      <div class="field"><label>Type</label>
+        <select id="e_type">${MANUAL_TYPES.map(k=>`<option value="${k}" ${(e?.type||"meeting")===k?"selected":""}>${EVTYPE[k].icon} ${EVTYPE[k].label}</option>`).join("")}</select></div>
+      <div class="field"><label>Project (optional)</label>
+        <select id="e_proj"><option value="">— not tied to a project —</option>
+          ${projs.map(p=>`<option value="${p.id}" ${e?.projectId===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
+    </div>
+    <div class="field-row c2">
+      <div class="field"><label>Date</label><input id="e_date" type="date" value="${esc(e?.date||day||todayISO())}"></div>
+      <div class="field"><label>Start time (optional)</label><input id="e_start" type="time" value="${esc(e?.start||"")}"></div>
+    </div>
+    <div class="field-row c2">
+      <div class="field"><label>End date (optional — for multi-day)</label><input id="e_endDate" type="date" value="${esc(e?.endDate||"")}"></div>
+      <div class="field"><label>End time (optional)</label><input id="e_end" type="time" value="${esc(e?.end||"")}"></div>
+    </div>
+    <div class="field"><label>Notes</label><textarea id="e_notes" rows="3">${esc(e?.notes||"")}</textarea></div>
+    ${e?`<div class="field"><label style="display:flex;align-items:center;gap:8px;font-weight:400">
+      <input type="checkbox" id="e_done" ${e.done?"checked":""}> Done</label></div>`:""}
+    <span style="font-size:11.5px;color:var(--muted)">Leave the time blank for an all-day item. Project dates, bookings and money reminders appear on the calendar automatically — you don't need to add those here.</span>`,
+    `${e?`<button class="btn ghost danger" onclick="deleteEvent('${e.id}')">Delete</button>`:""}
+     <button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="saveEventModal('${id||""}')">${e?"Save changes":"Add"}</button>`);
+  $("#e_title")?.focus();
+}
+async function saveEventModal(id){
+  const rec={companyId:ACTIVE_COMPANY,projectId:$("#e_proj").value,title:$("#e_title").value.trim(),
+    type:$("#e_type").value,date:$("#e_date").value,start:$("#e_start").value,
+    endDate:$("#e_endDate").value,end:$("#e_end").value,notes:$("#e_notes").value.trim(),
+    done:$("#e_done")?.checked||false,assigned:""};
+  if(!rec.title) return alert("Give the event a title.");
+  if(!rec.date) return alert("Pick a date.");
+  if(rec.endDate&&rec.endDate<rec.date) return alert("The end date is before the start date.");
+  if(id) Object.assign(DB.events.find(x=>x.id===id),rec);
+  else DB.events.push({id:uid(),...rec});
+  closeModal(); render(); await persist(saveEvents);
+}
+async function deleteEvent(id){
+  if(!confirm("Delete this event?")) return;
+  DB.events=DB.events.filter(x=>x.id!==id); closeModal(); render(); await persist(saveEvents,"Event deleted");
+}
+/* follow-up on a money item — moves the reminder instead of creating a task */
+function openFollowUp(qid){
+  const q=getQuote(qid);
+  openModal("Follow-up reminder",`
+    <p style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Move this reminder to a date that suits — it still disappears by itself once the money moves.</p>
+    <div class="field"><label>Remind me on</label><input id="f_date" type="date" value="${esc(followUp(q)||todayISO())}"></div>
+    <div class="field"><label>Note</label><input id="f_note" value="${esc(q.extra?.followUpNote||"")}" placeholder="e.g. promised payment after the 15th"></div>`,
+    `${followUp(q)?`<button class="btn ghost" onclick="setFollowUp('${qid}','','');closeModal()">Clear</button>`:""}
+     <button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="setFollowUp('${qid}',$('#f_date').value,$('#f_note').value);closeModal()">Save</button>`);
+}
 /* ================= GOOGLE DRIVE ATTACHMENTS =================
    Uses the narrow drive.file scope: the app can only ever see files it created.
    Records store {id,name,link} only — never file contents. Detaching unlinks
@@ -2312,6 +2569,19 @@ function renderProjectBooking(b,p){
         <tbody>${aLines.map(assetRow).join("")}</tbody></table></div>`
       :`<div class="empty" style="padding:18px">No equipment booked yet.${models.length?"":" Register assets first — the fleet is empty."}</div>`}
     </div>
+    ${(()=>{const evts=allEvents(cid,p.id).filter(e=>(e.endDate||e.date)>=todayISO()).slice(0,8);
+      return `<div class="card" style="margin-bottom:16px">
+        <div class="card-pad" style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px">
+          <span class="eyebrow">Schedule — upcoming for this project</span>
+          <button class="btn small" onclick="openEventModal(null,'${p.mobDate||p.eventDate||todayISO()}')">+ Add event</button></div>
+        <div class="card-pad" style="padding-top:0">
+          ${evts.length?`<div style="display:flex;flex-direction:column;gap:3px">${evts.map(e=>`
+            <div style="display:flex;gap:8px;align-items:center">
+              <span class="num" style="font-size:11.5px;color:var(--muted);min-width:110px">${fmtDate(e.date)}${e.start?" "+e.start:""}</span>
+              <div style="flex:1">${evtChip(e)}</div></div>`).join("")}</div>`
+          :`<div style="font-size:12.5px;color:var(--muted)">Nothing upcoming — set the project schedule or add an event.</div>`}
+        </div></div>`;})()}
+
     <div class="card">
       <div class="card-pad" style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px">
         <span class="eyebrow">Crew bookings — named people, shown on quotes only as a line item</span>
@@ -2847,14 +3117,15 @@ function arApHTML(cid){
     ${agingTable("Receivables aging","",arB,arTot,"var(--amber)")}
     ${ar.length?`<div class="card" style="overflow-x:auto;margin-bottom:20px"><table class="grid" style="min-width:800px">
       <thead><tr><th>Invoice · project</th><th style="width:120px">${noDue?"Due / invoiced":"Due"}</th><th style="width:110px">Age</th>
-        <th class="t-right">Invoiced</th><th class="t-right">Received</th><th class="t-right">Outstanding</th></tr></thead>
+        <th class="t-right">Invoiced</th><th class="t-right">Received</th><th class="t-right">Outstanding</th><th style="width:110px"></th></tr></thead>
       <tbody>${ar.map(r=>`<tr class="rowlink" onclick="go({view:'quote',quoteId:'${r.q.id}'})">
         <td style="font-weight:600">${esc(r.q.quoteNumber||r.q.title||"Invoice")}<br><span style="font-size:11px;color:var(--muted)">${esc(r.p.name)} · ${esc(r.p.client||"")}</span></td>
         <td style="font-size:12px;color:var(--muted)">${fmtDate(r.ref)}${r.hasDue?"":' <span title="No due date on the invoice — aging from the invoice date" style="color:var(--amber)">*</span>'}</td>
         <td><span class="pill" style="background:transparent;color:${AGE[r.bucket].color};border:1px solid var(--line)">${r.days>0?r.days+" days":"not due"}</span></td>
         <td class="t-right num">${fmtRp(r.invoiced)}</td>
         <td class="t-right num" style="color:var(--muted)">${fmtRp(r.settled)}</td>
-        <td class="t-right num" style="font-weight:700;color:${AGE[r.bucket].color}">${fmtRp(r.out)}</td></tr>`).join("")}
+        <td class="t-right num" style="font-weight:700;color:${AGE[r.bucket].color}">${fmtRp(r.out)}</td>
+        <td class="t-right"><button class="btn ghost small" title="${followUp(r.q)?"Follow-up "+fmtDate(followUp(r.q)):"Set a follow-up date"}" onclick="event.stopPropagation();openFollowUp('${r.q.id}')">${followUp(r.q)?"⏰ "+fmtDate(followUp(r.q)):"⏰"}</button></td></tr>`).join("")}
       </tbody></table></div>
       ${noDue?`<p style="font-size:11.5px;color:var(--muted);margin:-12px 0 20px">* ${noDue} invoice(s) have no due date — set payment terms on the invoice and the age becomes days overdue instead of days since invoicing.</p>`:""}`
     :`<div class="card" style="margin-bottom:20px"><div class="empty">Nothing outstanding — every invoice is settled.</div></div>`}
